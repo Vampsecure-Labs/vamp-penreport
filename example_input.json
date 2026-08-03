@@ -1,0 +1,75 @@
+{
+  "tool": "vamp-example",
+  "version": "1.0",
+  "target": "ejemplo.com",
+  "timestamp": "2026-08-03T00:00:00Z",
+  "findings": [
+    {
+      "id": "EX-001",
+      "severity": "CRITICAL",
+      "title": "Credenciales por defecto en panel de administración",
+      "description": "El panel de administración web accesible en /admin acepta las credenciales por defecto admin:admin, lo que permite el acceso completo sin autenticación real.",
+      "evidence": "POST /admin/login HTTP/1.1\nHost: ejemplo.com\n\nusername=admin&password=admin\n\nHTTP/1.1 302 Found\nLocation: /admin/dashboard\nSet-Cookie: session=abc123; Path=/; HttpOnly",
+      "remediation": "Cambiar inmediatamente las credenciales por defecto. Implementar política de contraseñas fuertes. Considerar autenticación multifactor para accesos administrativos.",
+      "references": [
+        "https://owasp.org/www-project-top-ten/2021/A07_2021-Identification_and_Authentication_Failures",
+        "CWE-521: Weak Password Requirements"
+      ]
+    },
+    {
+      "id": "EX-002",
+      "severity": "HIGH",
+      "title": "Inyección SQL en parámetro id de búsqueda de usuarios",
+      "description": "El endpoint /api/users?id= no sanitiza correctamente el parámetro de entrada, permitiendo inyección SQL que podría exponer toda la base de datos de usuarios.",
+      "evidence": "GET /api/users?id=1' OR '1'='1 HTTP/1.1\nHost: ejemplo.com\n\nHTTP/1.1 200 OK\n[{\"id\":1,\"email\":\"admin@ejemplo.com\"},{\"id\":2,...}]",
+      "remediation": "Utilizar consultas parametrizadas o prepared statements. Implementar validación de entrada estricta. Revisar todos los endpoints que interactúen con la base de datos.",
+      "references": [
+        "https://owasp.org/www-community/attacks/SQL_Injection",
+        "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      ]
+    },
+    {
+      "id": "EX-003",
+      "severity": "HIGH",
+      "title": "Cabeceras de seguridad HTTP ausentes",
+      "description": "El servidor no envía las cabeceras de seguridad recomendadas: Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, Strict-Transport-Security.",
+      "evidence": "HTTP/1.1 200 OK\nServer: Apache/2.4.51\nContent-Type: text/html; charset=UTF-8\n\n[Ausencia de: CSP, X-Frame-Options, HSTS, X-Content-Type-Options]",
+      "remediation": "Configurar las cabeceras de seguridad HTTP en el servidor web o en el proxy inverso. Utilizar https://securityheaders.com para validar la configuración.",
+      "references": [
+        "https://owasp.org/www-project-secure-headers/",
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy"
+      ]
+    },
+    {
+      "id": "EX-004",
+      "severity": "MEDIUM",
+      "title": "Enumeración de usuarios mediante diferencia en tiempos de respuesta",
+      "description": "El endpoint de autenticación revela si un usuario existe o no mediante diferencias en el tiempo de respuesta: usuarios válidos tardan ~500ms, usuarios inexistentes tardan ~5ms.",
+      "evidence": "POST /login {username: 'admin'} -> 487ms\nPOST /login {username: 'noexiste123'} -> 8ms\n\nDiferencia estadísticamente significativa (p<0.001)",
+      "remediation": "Implementar tiempos de respuesta constantes en el endpoint de autenticación (constant-time comparison). Añadir rate limiting y CAPTCHA tras múltiples intentos fallidos.",
+      "references": [
+        "CWE-208: Observable Timing Discrepancy",
+        "https://owasp.org/www-community/attacks/Timing_Attack"
+      ]
+    },
+    {
+      "id": "EX-005",
+      "severity": "LOW",
+      "title": "Versión de servidor web expuesta en cabecera Server",
+      "description": "La cabecera HTTP Server revela la versión exacta del servidor web (Apache/2.4.51), facilitando la identificación de vulnerabilidades específicas de esa versión.",
+      "evidence": "HTTP/1.1 200 OK\nServer: Apache/2.4.51 (Ubuntu)\nX-Powered-By: PHP/8.0.12",
+      "remediation": "Configurar el servidor para no exponer información de versión en cabeceras HTTP. En Apache: ServerTokens Prod; en nginx: server_tokens off.",
+      "references": [
+        "CWE-200: Exposure of Sensitive Information to an Unauthorized Actor"
+      ]
+    }
+  ],
+  "summary": {
+    "total": 5,
+    "critical": 1,
+    "high": 2,
+    "medium": 1,
+    "low": 1,
+    "info": 0
+  }
+}
