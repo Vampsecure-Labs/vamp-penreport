@@ -1,18 +1,15 @@
-# === Entornos Python ===
-.venv/
-venv/
-env/
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
-*.pyd
-.Python
-*.egg-info/
-dist/
+.venv/
+venv/
+env/
 build/
-*.egg
+dist/
+*.egg-info/
 
-# === Secretos y credenciales ===
+# Credenciales y secretos
 .env
 .env.*
 !.env.example
@@ -20,21 +17,19 @@ build/
 *.pem
 *.p12
 *.pfx
-.rotated-secrets.txt
+*.crt
 
-# === Outputs generados por vamp-penreport ===
-# No versionar los informes generados (outputs), solo los inputs de ejemplo
-report*.html
-output*.html
-report*.pdf
-output*.pdf
-report*.json
-output*.json
-results*.json
-# example_*.json SÍ se versiona (es input de ejemplo, no output)
+# Outputs generados
+*.html
+*.pdf
+*.json
+*.sarif
+*.csv
+*.log
 
-# === Editores y SO ===
+# Editores y sistema operativo
 .DS_Store
+._*
 .idea/
 .vscode/
 *.swp
@@ -42,15 +37,5 @@ results*.json
 *~
 Thumbs.db
 
-# === Ficheros temporales ===
-*.tmp
-*.bak
-*.log
-
-# === Datos de cliente (nunca al repo) ===
-client_*.json
-pentest_*.json
-audit_*.json
-scan_*.json
-*.sarif
-*.csv
+# Excepción: input de ejemplo (no es output)
+!example_input.json
