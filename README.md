@@ -1,5 +1,6 @@
 # vamp-penreport
 
+![Version](https://img.shields.io/badge/version-2.0.0-crimson)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![VampSecure Labs](https://img.shields.io/badge/VampSecure-Labs-7c3aed)
@@ -19,7 +20,9 @@ It is **not a scanner** — it is a report aggregator and generator. It has no f
 - Computes global risk score (0–100) with qualitative label (Low / Moderate / High / Critical)
 - Executive summary with inline SVG gauge and category bar chart
 - Prioritized remediation roadmap (4 phases: Immediate / Urgent / Planned / Continuous)
+- **MITRE ATT&CK coverage section**: auto-detected from `vamp-log-analyzer` FORA-NNN findings — 25 detectors mapped to 12 tactics; rendered as an interactive table with severity badges and technique tooltips
 - Detailed technical findings section with estimated CVSS range
+- **Local logo embedding**: `--logo-file PATH` embeds any PNG/JPG/SVG as a base64 data URI — the HTML is fully self-contained with no external requests
 - Printable HTML with full CSS `@media print` support
 - Native PDF via `fpdf2` (no browser required)
 - Markdown output for integration into wikis or documentation systems
@@ -34,7 +37,7 @@ cd vamp-penreport
 pip install -r requirements.txt
 ```
 
-`fpdf2` is only required if you need PDF output. HTML and Markdown generation work with Python stdlib alone.
+`fpdf2` is only required for PDF output. HTML and Markdown generation work with Python stdlib alone.
 
 ---
 
@@ -58,6 +61,7 @@ python3 vamp_penreport.py scan1.json scan2.json scan3.json \
   --scope "Perimeter web applications and exposed APIs" \
   --start-date 2026-07-01 \
   --end-date 2026-07-31 \
+  --logo-file /path/to/client_logo.png \
   --report-html report.html \
   --report-pdf report.pdf \
   --report-md report.md \
@@ -74,14 +78,16 @@ python3 vamp_penreport.py scan1.json scan2.json \
   --report-html executive_summary.html
 ```
 
-### Using the bundled example
+### Forensic log report with MITRE ATT&CK coverage
+
+When the input includes output from `vamp-log-analyzer`, the report automatically adds a **MITRE ATT&CK coverage section** showing which tactics and techniques were observed:
 
 ```bash
-python3 vamp_penreport.py example_input.json \
-  --client "Demo Client" \
-  --engagement "Example Run" \
-  --report-html demo_report.html \
-  --report-pdf demo_report.pdf
+python3 vamp_penreport.py \
+  recon.json ssl.json http.json logs_forensic.json \
+  --client "Acme Corp" \
+  --engagement "Full Perimeter Assessment" \
+  --report-html full_report.html
 ```
 
 ### All options
@@ -92,26 +98,28 @@ usage: vamp-penreport [-h] --client NOMBRE [--engagement DESC]
                       [--start-date FECHA] [--end-date FECHA]
                       [--report-html FILE] [--report-pdf FILE]
                       [--report-md FILE] [--report-json FILE]
-                      [--logo-url URL] [--executive-only] [--verbose]
+                      [--logo-url URL] [--logo-file FICHERO]
+                      [--executive-only] [--verbose]
                       INPUT [INPUT ...]
 
 positional arguments:
-  INPUT               One or more VSL JSON output files
+  INPUT                One or more VSL JSON output files
 
 options:
-  --client NOMBRE     Client name (required)
-  --engagement DESC   Engagement description
-  --auditor NOMBRE    Auditor name/team (default: VampSecure Labs)
-  --scope TEXTO       Engagement scope
-  --start-date FECHA  Start date (YYYY-MM-DD)
-  --end-date FECHA    End date (YYYY-MM-DD)
-  --report-html FILE  HTML output file (default: report.html)
-  --report-pdf FILE   PDF output file (requires fpdf2)
-  --report-md FILE    Markdown output file
-  --report-json FILE  Consolidated JSON output file
-  --logo-url URL      Client logo URL (HTML only, optional)
-  --executive-only    Executive summary only, no technical findings
-  --verbose           Verbose/debug output
+  --client NOMBRE      Client name (required)
+  --engagement DESC    Engagement description
+  --auditor NOMBRE     Auditor name/team (default: VampSecure Labs)
+  --scope TEXTO        Engagement scope
+  --start-date FECHA   Start date (YYYY-MM-DD)
+  --end-date FECHA     End date (YYYY-MM-DD)
+  --report-html FILE   HTML output file (default: report.html)
+  --report-pdf FILE    PDF output file (requires fpdf2)
+  --report-md FILE     Markdown output file
+  --report-json FILE   Consolidated JSON output file
+  --logo-url URL       Client logo URL (HTML only, optional)
+  --logo-file FILE     Local logo file embedded as base64 (PNG/JPG/SVG)
+  --executive-only     Executive summary only, no technical findings
+  --verbose            Verbose/debug output
 ```
 
 ---
@@ -133,7 +141,7 @@ VSL tools produce output files in the following standard schema. All fields are 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Finding identifier (e.g. `DOCK-001`) |
+| `id` | string | Finding identifier (e.g. `DOCK-001`, `FORA-001`) |
 | `severity` | string | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, or `INFO` |
 | `title` | string | Short finding title |
 | `description` | string | Technical description |
@@ -141,7 +149,7 @@ VSL tools produce output files in the following standard schema. All fields are 
 | `remediation` | string | Recommended fix |
 | `references` | array | External references (CVEs, CWEs, URLs…) |
 
-Alternative field names are also accepted for compatibility: `results`/`issues`/`vulnerabilities` instead of `findings`; `risk`/`level` instead of `severity`; `detail`/`details` instead of `description`; `output`/`proof` instead of `evidence`; `fix`/`recommendation` instead of `remediation`.
+Alternative field names are also accepted: `results`/`issues`/`vulnerabilities` instead of `findings`; `risk`/`level` instead of `severity`; `detail`/`details` instead of `description`; `output`/`proof` instead of `evidence`; `fix`/`recommendation` instead of `remediation`.
 
 ---
 
@@ -149,13 +157,31 @@ Alternative field names are also accepted for compatibility: `results`/`issues`/
 
 | Section | Description |
 |---------|-------------|
-| **Cover page** | Client name, dates, auditor, CONFIDENTIAL classification |
-| **Table of contents** | Navigable index |
+| **Cover page** | Client name, dates, auditor, CONFIDENTIAL classification, optional logo |
+| **Table of contents** | Navigable index with dynamic numbering |
 | **Executive summary** | Risk gauge (SVG), severity table, top 5 findings, tool distribution chart |
 | **Remediation roadmap** | 4-phase plan: Immediate (0–7d), Urgent (7–30d), Planned (30–90d), Continuous |
+| **MITRE ATT&CK coverage** | Auto-generated when FORA-NNN findings are present — tactics matrix with severity badges and technique tooltips |
 | **Technical findings** | Full detail per finding: description, evidence, remediation, CVSS estimate, references |
 | **Methodology** | Tools used, severity classification table |
 | **Disclaimer** | Confidentiality notice |
+
+> The MITRE ATT&CK section only appears when the report contains findings from `vamp-log-analyzer` (FORA-NNN prefix). Section numbers adjust automatically.
+
+---
+
+## MITRE ATT&CK Coverage
+
+When `vamp-log-analyzer` output is included, `vamp-penreport` automatically maps the 25 FORA-NNN detectors to MITRE ATT&CK tactics and renders a coverage matrix. Example:
+
+| Tactic | Detected | Detectors |
+|--------|----------|-----------|
+| Credential Access | CRITICAL×2, HIGH×1 | `FORA-001` `FORA-002` `FORA-022` |
+| Reconnaissance | HIGH×1 | `FORA-009` |
+| Initial Access | MEDIUM×1 | `FORA-007` |
+| … | … | … |
+
+The 25 detectors cover 12 tactics: Reconnaissance, Initial Access, Execution, Persistence, Privilege Escalation, Defense Evasion, Credential Access, Discovery, Lateral Movement, Collection, Command & Control, Exfiltration.
 
 ---
 
@@ -163,7 +189,9 @@ Alternative field names are also accepted for compatibility: `results`/`issues`/
 
 `vamp-penreport` works with JSON output from any tool in the VampSecure Labs toolkit:
 
+- `vamp-log-analyzer` — Forensic log analysis — 25 MITRE ATT&CK detectors, STIX 2.1 *(triggers ATT&CK section)*
 - `vamp-docker-audit` — Docker container and daemon security
+- `vamp-k8s-audit` — Kubernetes cluster security review
 - `vamp-ssl-audit` — TLS/SSL certificate and configuration analysis
 - `vamp-secrets-scanner` — Hardcoded secrets and credential detection
 - `vamp-http-audit` — HTTP headers and web security checks
@@ -174,12 +202,10 @@ Alternative field names are also accepted for compatibility: `results`/`issues`/
 - `vamp-jwt-audit` — JWT token security analysis
 - `vamp-k8s-audit` — Kubernetes cluster security review
 - `vamp-llm-probe` — LLM endpoint security assessment
-- `vamp-log-hunter` — Log analysis and anomaly detection
 - `vamp-mail-audit` — Email security (SPF/DKIM/DMARC)
 - `vamp-arp-sentinel` — ARP spoofing and network analysis
 - `vamp-entropy-watch` — Entropy-based anomaly detection
-- `vamp-icmp-shadow` — ICMP traffic analysis
-- `vamp-forticheck` — FortiGate configuration review
+- `vamp-forticheck` — Multi-vendor edge device CVE scanner
 - `vamp-cloud-enum` — Cloud asset enumeration
 
 ---
