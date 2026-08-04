@@ -37,7 +37,7 @@ from html import escape as html_escape
 # Constantes y configuración
 # ---------------------------------------------------------------------------
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 COPYRIGHT = "© VampSecure Studios — VampSecure Labs Security Research Division"
 DISCLAIMER = (
     "Este informe es CONFIDENCIAL y está destinado exclusivamente al cliente indicado. "
@@ -94,6 +94,43 @@ REMEDIATION_PHASES = [
     ("Fase 2 — Urgente",         "7–30 días",   ["HIGH"]),
     ("Fase 3 — Planificada",     "30–90 días",  ["MEDIUM"]),
     ("Fase 4 — Mejora continua", "+90 días",    ["LOW", "INFO"]),
+]
+
+# Mapeo FORA-NNN → (táctica MITRE ATT&CK, técnica ATT&CK)
+FORA_ATTACK_MAP: Dict[str, Tuple[str, str]] = {
+    "FORA-001": ("Credential Access",      "T1110.001 — Brute Force: Password Guessing"),
+    "FORA-002": ("Credential Access",      "T1110.003 — Brute Force: Password Spraying (HTTP)"),
+    "FORA-003": ("Credential Access",      "T1110.003 — Brute Force: Password Spraying"),
+    "FORA-004": ("Initial Access",         "T1190 — Exploit Public-Facing Application (SQLi)"),
+    "FORA-005": ("Initial Access",         "T1190 — Exploit Public-Facing Application (DB SQLi)"),
+    "FORA-006": ("Initial Access",         "T1059.007 — Command and Scripting Interpreter: XSS"),
+    "FORA-007": ("Initial Access",         "T1190 — Exploit Public-Facing Application (LFI/RFI)"),
+    "FORA-008": ("Persistence",            "T1505.003 — Server Software Component: Web Shell"),
+    "FORA-009": ("Reconnaissance",         "T1595 — Active Scanning"),
+    "FORA-010": ("Reconnaissance",         "T1595.003 — Active Scanning: Wordlist Scanning"),
+    "FORA-011": ("Exfiltration",           "T1048 — Exfiltration Over Alternative Protocol"),
+    "FORA-012": ("Collection",             "T1005 — Data from Local System (DB)"),
+    "FORA-013": ("Privilege Escalation",   "T1548 — Abuse Elevation Control Mechanism"),
+    "FORA-014": ("Privilege Escalation",   "T1136 — Create Account"),
+    "FORA-015": ("Defense Evasion",        "T1078 — Valid Accounts (off-hours access)"),
+    "FORA-016": ("Persistence",            "T1053 — Scheduled Task/Job"),
+    "FORA-017": ("Execution",              "T1059 — Command and Scripting Interpreter"),
+    "FORA-018": ("Lateral Movement",       "T1021 — Remote Services"),
+    "FORA-019": ("Discovery",              "T1083 — File and Directory Discovery"),
+    "FORA-020": ("Privilege Escalation",   "T1078.003 — Valid Accounts: Local Accounts (root)"),
+    "FORA-021": ("Defense Evasion",        "T1027 — Obfuscated Files or Information"),
+    "FORA-022": ("Credential Access",      "T1110.004 — Brute Force: Credential Stuffing"),
+    "FORA-023": ("Command & Control",      "T1071 — Application Layer Protocol (C2 beacon)"),
+    "FORA-024": ("Credential Access",      "T1110 — Brute Force: Slow Drip"),
+    "FORA-025": ("Exfiltration",           "T1048.003 — Exfiltration Over Unencrypted Protocol"),
+}
+
+# Orden canónico de tácticas ATT&CK para el informe
+ATTACK_TACTICS_ORDER = [
+    "Reconnaissance", "Initial Access", "Execution", "Persistence",
+    "Privilege Escalation", "Defense Evasion", "Credential Access",
+    "Discovery", "Lateral Movement", "Collection", "Command & Control",
+    "Exfiltration",
 ]
 
 # Mapeo de alias de severidad a canónico
@@ -168,6 +205,7 @@ class ReportMeta:
     start_date: str = ""
     end_date: str = ""
     logo_url: str = ""
+    logo_b64: str = ""   # data URI base64 (tiene prioridad sobre logo_url)
     generated_at: str = field(default_factory=lambda: datetime.datetime.now().isoformat(timespec="seconds"))
 
 
@@ -514,6 +552,110 @@ class PenReport:
         return [f for f in self._findings_by_severity() if f.severity in severities]
 
     # ------------------------------------------------------------------
+    # Cobertura MITRE ATT&CK (hallazgos FORA-NNN)
+    # ------------------------------------------------------------------
+
+    def _fora_attack_coverage(self) -> Dict[str, List["Finding"]]:
+        """
+        Agrupa los hallazgos FORA-NNN por táctica MITRE ATT&CK.
+
+        Usa el campo finding.id para buscar en FORA_ATTACK_MAP y el campo
+        mitre_tactic (si existe en el JSON fuente) como respaldo.
+        Devuelve un dict {táctica: [Finding, …]} solo con tácticas que tienen hallazgos.
+        """
+        by_tactic: Dict[str, List["Finding"]] = {}
+        for f in self.findings:
+            fid = f.id.strip().upper()
+            # Buscar en el mapa estático
+            if fid in FORA_ATTACK_MAP:
+                tactic, _ = FORA_ATTACK_MAP[fid]
+            elif fid.startswith("FORA-"):
+                tactic = "Unknown"
+            else:
+                continue
+            by_tactic.setdefault(tactic, []).append(f)
+        return by_tactic
+
+    def _build_attack_html(self) -> str:
+        """Genera el HTML de la sección de cobertura MITRE ATT&CK."""
+        by_tactic = self._fora_attack_coverage()
+        if not by_tactic:
+            return ""
+
+        rows_html = ""
+        for tactic in ATTACK_TACTICS_ORDER:
+            findings = by_tactic.get(tactic, [])
+            if not findings:
+                continue
+            by_sev_count: Dict[str, int] = {}
+            for f in findings:
+                by_sev_count[f.severity] = by_sev_count.get(f.severity, 0) + 1
+
+            badge_str = " ".join(
+                f"<span class='badge' style='background:{SEV_COLOR_HTML[s]}'>{s[:4]} ×{n}</span>"
+                for s, n in sorted(by_sev_count.items(),
+                                   key=lambda x: ["CRITICAL","HIGH","MEDIUM","LOW","INFO"].index(x[0]))
+            )
+            fid_parts = []
+            for f in findings:
+                tip = FORA_ATTACK_MAP.get(f.id.upper(), ("", f.title))[1]
+                fid_parts.append(
+                    "<code title='" + html_escape(tip) + "'>" + html_escape(f.id) + "</code>"
+                )
+            fid_links = " ".join(fid_parts)
+            rows_html += (
+                f"<tr>"
+                f"<td><strong>{html_escape(tactic)}</strong></td>"
+                f"<td>{badge_str}</td>"
+                f"<td class='fid-cell'>{fid_links}</td>"
+                f"</tr>\n"
+            )
+
+        return f"""
+<table class='findings-table attack-table'>
+  <thead>
+    <tr>
+      <th style='width:200px'>Táctica ATT&amp;CK</th>
+      <th style='width:260px'>Severidad detectada</th>
+      <th>Detectores activados (FORA-NNN)</th>
+    </tr>
+  </thead>
+  <tbody>
+{rows_html}
+  </tbody>
+</table>
+<p class='section-note' style='margin-top:12px'>
+  Cobertura basada en los detectores de <strong>vamp-log-analyzer</strong> mapeados al
+  framework <a href='https://attack.mitre.org/' style='color:#7c3aed'>MITRE ATT&amp;CK</a>.
+  Solo se muestran las tácticas con al menos un hallazgo confirmado.
+</p>"""
+
+    def _build_attack_md(self) -> List[str]:
+        """Genera las líneas Markdown de la sección de cobertura MITRE ATT&CK."""
+        by_tactic = self._fora_attack_coverage()
+        if not by_tactic:
+            return []
+
+        lines = [
+            "## Cobertura MITRE ATT&CK",
+            "",
+            "| Táctica | Severidades | Detectores |",
+            "|---------|-------------|------------|",
+        ]
+        for tactic in ATTACK_TACTICS_ORDER:
+            findings = by_tactic.get(tactic, [])
+            if not findings:
+                continue
+            by_sev_count: Dict[str, int] = {}
+            for f in findings:
+                by_sev_count[f.severity] = by_sev_count.get(f.severity, 0) + 1
+            sev_str = ", ".join(f"{s}×{n}" for s, n in by_sev_count.items())
+            fid_str = " ".join(f"`{f.id}`" for f in findings)
+            lines.append(f"| {tactic} | {sev_str} | {fid_str} |")
+        lines.append("")
+        return lines
+
+    # ------------------------------------------------------------------
     # Resumen en consola
     # ------------------------------------------------------------------
 
@@ -611,13 +753,27 @@ class PenReport:
         # --- Hallazgos técnicos ---
         technical_html = "" if executive_only else self._build_technical_html()
 
+        # --- Sección ATT&CK (solo si hay hallazgos FORA-NNN) ---
+        attack_html      = self._build_attack_html()
+        has_attack       = bool(attack_html)
+
+        # Numeración dinámica de secciones
+        sec_exec      = 1
+        sec_roadmap   = 2
+        sec_attack    = 3 if has_attack else None
+        _offset       = 1 if has_attack else 0
+        sec_technical = (3 + _offset) if not executive_only else None
+        sec_method    = 3 + _offset + (1 if not executive_only else 0)
+        sec_disclaim  = sec_method + 1
+
         # --- Índice de contenidos ---
         toc_items = [
-            ('<a href="#exec-summary">1. Resumen Ejecutivo</a>', True),
-            ('<a href="#roadmap">2. Roadmap de Remediación</a>', True),
-            ('<a href="#technical">3. Hallazgos Técnicos</a>', not executive_only),
-            ('<a href="#methodology">4. Metodología</a>', True),
-            ('<a href="#disclaimer">5. Disclaimer</a>', True),
+            (f'<a href="#exec-summary">{sec_exec}. Resumen Ejecutivo</a>',  True),
+            (f'<a href="#roadmap">{sec_roadmap}. Roadmap de Remediación</a>', True),
+            (f'<a href="#attack">{sec_attack}. Cobertura MITRE ATT&CK</a>',  has_attack),
+            (f'<a href="#technical">{sec_technical}. Hallazgos Técnicos</a>', not executive_only),
+            (f'<a href="#methodology">{sec_method}. Metodología</a>',         True),
+            (f'<a href="#disclaimer">{sec_disclaim}. Disclaimer</a>',         True),
         ]
         toc_html = "<ul class='toc-list'>"
         for item, show in toc_items:
@@ -627,7 +783,9 @@ class PenReport:
 
         # --- Logo del cliente ---
         logo_html = ""
-        if meta.logo_url:
+        if meta.logo_b64:
+            logo_html = f"<img src='{html_escape(meta.logo_b64)}' alt='Logo cliente' class='client-logo'>"
+        elif meta.logo_url:
             logo_html = f"<img src='{html_escape(meta.logo_url)}' alt='Logo cliente' class='client-logo'>"
 
         # --- Fechas del engagement ---
@@ -743,14 +901,24 @@ class PenReport:
 
 <!-- ===== ROADMAP DE REMEDIACIÓN ===== -->
 <div class="section page-break-before" id="roadmap">
-  <h1 class="section-title">2. Roadmap de Remediación</h1>
+  <h1 class="section-title">{sec_roadmap}. Roadmap de Remediación</h1>
   {roadmap_html}
 </div>
+
+<!-- ===== COBERTURA MITRE ATT&CK ===== -->
+{"" if not has_attack else f'''
+<div class="section page-break-before" id="attack">
+  <h1 class="section-title">{sec_attack}. Cobertura MITRE ATT&amp;CK</h1>
+  <p class="section-note">Los hallazgos forenses (FORA-NNN) han sido mapeados al framework MITRE ATT&amp;CK.
+  La tabla muestra las tácticas cubiertas y los detectores activados durante el análisis de logs.</p>
+  {attack_html}
+</div>
+'''}
 
 <!-- ===== HALLAZGOS TÉCNICOS ===== -->
 {"" if executive_only else f'''
 <div class="section page-break-before" id="technical">
-  <h1 class="section-title">3. Hallazgos Técnicos</h1>
+  <h1 class="section-title">{sec_technical}. Hallazgos Técnicos</h1>
   <p class="section-note">Los hallazgos están ordenados por severidad (mayor a menor). Los valores CVSS son estimaciones orientativas basadas en el nivel de severidad asignado por la herramienta de origen.</p>
   {technical_html}
 </div>
@@ -758,7 +926,7 @@ class PenReport:
 
 <!-- ===== METODOLOGÍA ===== -->
 <div class="section page-break-before" id="methodology">
-  <h1 class="section-title">{"4" if not executive_only else "3"}. Metodología</h1>
+  <h1 class="section-title">{sec_method}. Metodología</h1>
   <p>
     El presente informe ha sido generado mediante la agregación y análisis de los resultados
     producidos por las herramientas del toolkit <strong>VampSecure Labs (VSL)</strong>.
@@ -796,7 +964,7 @@ class PenReport:
 
 <!-- ===== DISCLAIMER ===== -->
 <div class="section" id="disclaimer">
-  <h1 class="section-title">{"5" if not executive_only else "4"}. Disclaimer</h1>
+  <h1 class="section-title">{sec_disclaim}. Disclaimer</h1>
   <div class="disclaimer-box">
     {html_escape(DISCLAIMER)}
   </div>
@@ -968,6 +1136,18 @@ class PenReport:
     .count-cell { text-align: center; font-weight: 600; }
     .empty-cell { color: #9ca3af; text-align: center; font-style: italic; }
     .sev-table th { background: #2d2d5e; }
+    .attack-table th { background: #1e293b; }
+    .attack-table td { vertical-align: middle; }
+    .fid-cell code {
+      display: inline-block;
+      background: #f1f5f9;
+      color: #7c3aed;
+      font-size: 0.78em;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin: 2px 2px;
+      cursor: default;
+    }
 
     /* ===== BADGE ===== */
     .badge {
@@ -1647,8 +1827,17 @@ class PenReport:
                         lines.append(f"- {ref}")
                     lines.append("")
 
-        # Disclaimer
-        sec_num = "4" if not executive_only else "3"
+        # Cobertura ATT&CK (si hay hallazgos FORA)
+        attack_md = self._build_attack_md()
+        if attack_md:
+            lines += ["---", ""] + attack_md
+
+        # Numeración de la sección Disclaimer según contexto
+        _md_offset = 1 if attack_md else 0
+        if not executive_only:
+            sec_num = str(4 + _md_offset)
+        else:
+            sec_num = str(3 + _md_offset)
         lines += [
             f"---",
             f"",
@@ -1871,6 +2060,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="logo_url",
         help="URL del logo del cliente (opcional, para HTML)",
     )
+    parser.add_argument(
+        "--logo-file",
+        default="",
+        metavar="FICHERO",
+        dest="logo_file",
+        help="Ruta local al logo del cliente; se embebe como base64 en el HTML (PNG/JPG/SVG)",
+    )
 
     # Opciones de comportamiento
     parser.add_argument(
@@ -1895,6 +2091,25 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
+    # Procesar logo: --logo-file tiene prioridad sobre --logo-url
+    logo_b64 = ""
+    logo_url  = getattr(args, "logo_url",  "")
+    logo_file = getattr(args, "logo_file", "")
+    if logo_file:
+        import base64
+        import mimetypes
+        logo_path = Path(logo_file)
+        if not logo_path.exists():
+            cprint(f"  [!] Fichero de logo no encontrado: {logo_file}", Color.YELLOW)
+        else:
+            mime, _ = mimetypes.guess_type(str(logo_path))
+            if not mime:
+                mime = "image/png"
+            raw = logo_path.read_bytes()
+            b64 = base64.b64encode(raw).decode("ascii")
+            logo_b64 = f"data:{mime};base64,{b64}"
+            cprint(f"  [i] Logo embebido como base64 ({len(raw)} bytes)", Color.GREY)
+
     # Construir metadatos
     meta = ReportMeta(
         client=args.client,
@@ -1903,7 +2118,8 @@ def main() -> int:
         scope=args.scope,
         start_date=args.start_date,
         end_date=args.end_date,
-        logo_url=args.logo_url,
+        logo_url=logo_url,
+        logo_b64=logo_b64,
     )
 
     # Crear instancia de PenReport
