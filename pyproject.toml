@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "vamp-penreport"
+version = "2.1"
+description = "Penetration test report generator for VampSecure Labs assessments"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "VampSecure Studios", email = "contact@vampsecurestudios.com" }]
+keywords = ["security", "pentest", "audit", "cybersecurity", "vampsecure", "reporting", "pentest-report", "documentation"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = []
+
+
+[project.scripts]
+vamp-penreport = "vamp_penreport:main"
+
+[project.urls]
+Homepage = "https://github.com/Vampsecure-Labs/vamp-penreport"
+Repository = "https://github.com/Vampsecure-Labs/vamp-penreport"
+
+[tool.setuptools]
+py-modules = ["vamp_penreport"]
