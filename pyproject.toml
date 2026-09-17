@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vamp-penreport"
-version = "2.1"
+version = "2.2"
 description = "Penetration test report generator for VampSecure Labs assessments"
 readme = "README.md"
 license = { text = "MIT" }

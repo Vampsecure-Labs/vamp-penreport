@@ -37,7 +37,7 @@ from html import escape as html_escape
 # Constantes y configuración
 # ---------------------------------------------------------------------------
 
-VERSION = "2.0.0"
+VERSION = "2.2.0"
 COPYRIGHT = "© VampSecure Studios — VampSecure Labs Security Research Division"
 DISCLAIMER = (
     "Este informe es CONFIDENCIAL y está destinado exclusivamente al cliente indicado. "
@@ -95,6 +95,123 @@ REMEDIATION_PHASES = [
     ("Fase 3 — Planificada",     "30–90 días",  ["MEDIUM"]),
     ("Fase 4 — Mejora continua", "+90 días",    ["LOW", "INFO"]),
 ]
+
+# Perfiles de sector para ajuste de lenguaje, marco regulatorio y priorización
+SECTOR_PROFILES: Dict[str, Dict] = {
+    "finanzas": {
+        "nombre": "Sector Financiero",
+        "resumen_ejecutivo": (
+            "En el sector financiero, las vulnerabilidades identificadas deben evaluarse "
+            "bajo el prisma del cumplimiento PCI-DSS y el riesgo financiero directo. "
+            "Los hallazgos relativos a secretos expuestos, acceso no autorizado y cifrado "
+            "deficiente tienen impacto inmediato sobre la integridad de los datos de pago "
+            "y pueden derivar en sanciones regulatorias, pérdida de certificación PCI-DSS "
+            "y daño reputacional severo."
+        ),
+        "marco_regulatorio": (
+            "Marco normativo aplicable: <strong>PCI-DSS v4.0</strong> (protección de datos "
+            "de tarjetas), <strong>ISO/IEC 27001</strong> (gestión de seguridad de la "
+            "información), <strong>DORA</strong> (resiliencia digital para entidades "
+            "financieras en la UE) y <strong>RGPD</strong>. Los hallazgos CRITICAL o HIGH "
+            "que afecten a sistemas de pago, datos de tarjetas o credenciales de acceso "
+            "pueden constituir una violación directa de los requisitos PCI-DSS 6.x y 8.x. "
+            "La resolución de estos hallazgos debe priorizarse antes de la próxima evaluación "
+            "QSA o ASV."
+        ),
+        # Palabras clave en title/tags que elevan un hallazgo HIGH a prioridad inmediata
+        "prioridad_extra_critica": ["secreto", "token", "clave", "api key", "acceso",
+                                    "credencial", "auth", "contraseña", "password"],
+    },
+    "sanidad": {
+        "nombre": "Sector Sanitario",
+        "resumen_ejecutivo": (
+            "En el sector sanitario, la protección de datos de salud y la disponibilidad "
+            "de los sistemas son requisitos críticos. Los hallazgos identificados se evalúan "
+            "bajo los principios del <strong>RGPD Art. 9</strong> (datos de salud como "
+            "categoría especial) y la normativa HIPAA para entidades con actividad en "
+            "EE.UU. Cualquier exposición de información de pacientes o interrupción de "
+            "sistemas clínicos puede tener consecuencias directas sobre la seguridad de "
+            "las personas y acarrear la obligación de notificación a la AEPD en 72 horas."
+        ),
+        "marco_regulatorio": (
+            "Marco normativo aplicable: <strong>RGPD Art. 9</strong> (datos de salud como "
+            "categoría especial de datos personales), <strong>HIPAA Security Rule</strong> "
+            "(para entidades con actividad en EE.UU.), <strong>LOPD-GDD</strong> (Ley "
+            "Orgánica 3/2018 en España), <strong>ENS</strong> (Esquema Nacional de "
+            "Seguridad para entidades públicas sanitarias) y <strong>Directiva NIS2</strong> "
+            "para infraestructuras críticas. Los hallazgos que expongan datos de pacientes "
+            "(PII/PHI) requieren notificación a la <abbr title='Agencia Española de "
+            "Protección de Datos'>AEPD</abbr> en un plazo máximo de 72 horas desde su "
+            "detección."
+        ),
+        "prioridad_extra_critica": ["pii", "dato personal", "paciente", "historia clínica",
+                                    "medical", "salud", "health"],
+    },
+    "admin-publica": {
+        "nombre": "Administración Pública",
+        "resumen_ejecutivo": (
+            "En el ámbito de la administración pública, la auditoría se enmarca en los "
+            "requisitos del <strong>Esquema Nacional de Seguridad (ENS)</strong> y la "
+            "LOPD-GDD. Las vulnerabilidades críticas detectadas pueden comprometer "
+            "servicios esenciales para los ciudadanos y exponer datos de carácter personal "
+            "bajo custodia pública, con las correspondientes responsabilidades "
+            "administrativas y penales."
+        ),
+        "marco_regulatorio": (
+            "Marco normativo aplicable: <strong>Real Decreto 311/2022</strong> (Esquema "
+            "Nacional de Seguridad — ENS), <strong>Ley Orgánica 3/2018</strong> (LOPD-GDD), "
+            "<strong>RGPD</strong>, <strong>Directiva NIS2</strong> (en fase de transposición) "
+            "y las guías técnicas <strong>CCN-STIC</strong> del Centro Criptológico Nacional. "
+            "Las entidades con nivel ENS ALTO deben subsanar los hallazgos CRITICAL en un "
+            "máximo de 30 días y notificar al <strong>CCN-CERT</strong> los incidentes de "
+            "nivel 4 o superior. Los sistemas con nivel ENS MEDIO deben aplicar las medidas "
+            "del Anexo II del RD 311/2022."
+        ),
+        "prioridad_extra_critica": ["ens", "administracion", "ciudadano", "gobierno",
+                                    "lopd", "agencia"],
+    },
+    "ecommerce": {
+        "nombre": "Comercio Electrónico",
+        "resumen_ejecutivo": (
+            "En plataformas de comercio electrónico, los hallazgos se evalúan bajo los "
+            "estándares <strong>PCI-DSS</strong> (transacciones de pago), disponibilidad "
+            "del servicio y protección de datos de clientes. Las vulnerabilidades en "
+            "formularios de pago, inyecciones SQL y exposición de datos de tarjetas tienen "
+            "impacto directo en la confianza del consumidor, las tasas de conversión y "
+            "el cumplimiento regulatorio de pagos."
+        ),
+        "marco_regulatorio": (
+            "Marco normativo aplicable: <strong>PCI-DSS v4.0</strong> (obligatorio para "
+            "todo procesador de tarjetas), <strong>RGPD</strong> (datos de compradores), "
+            "<strong>Directiva PSD2</strong> (servicios de pago en línea y autenticación "
+            "reforzada SCA) y normativa de defensa del consumidor. Los hallazgos que "
+            "afecten a formularios de pago, almacenamiento de datos de tarjetas o "
+            "mecanismos de autenticación de compradores tienen carácter prioritario y "
+            "pueden acarrear la revocación del servicio de procesamiento de pagos por "
+            "parte de la entidad adquirente."
+        ),
+        "prioridad_extra_critica": ["pago", "tarjeta", "carrito", "checkout",
+                                    "sqli", "inyección", "xss"],
+    },
+    "generic": {
+        "nombre": "Sector Genérico",
+        "resumen_ejecutivo": (
+            "El presente informe recoge los hallazgos de seguridad identificados durante "
+            "la auditoría. Se recomienda abordar los hallazgos CRITICAL y HIGH de forma "
+            "inmediata (0–30 días), los MEDIUM en un plazo planificado (30–90 días) y "
+            "los LOW como parte del programa de mejora continua."
+        ),
+        "marco_regulatorio": (
+            "Marco normativo de referencia general: <strong>ISO/IEC 27001</strong> "
+            "(gestión de seguridad de la información), <strong>RGPD</strong> (si se "
+            "tratan datos personales de ciudadanos europeos), <strong>OWASP Top 10</strong> "
+            "(para aplicaciones web) y las guías del <strong>CCN-CERT</strong>. Se "
+            "recomienda revisar la aplicabilidad de normativas sectoriales específicas "
+            "según la actividad y la jurisdicción de la organización auditada."
+        ),
+        "prioridad_extra_critica": [],
+    },
+}
 
 # Mapeo FORA-NNN → (táctica MITRE ATT&CK, técnica ATT&CK)
 FORA_ATTACK_MAP: Dict[str, Tuple[str, str]] = {
@@ -157,7 +274,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-penreport v2.1 · Penetration Testing Report Generator
+  vamp-penreport v2.2 · Penetration Testing Report Generator
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -390,10 +507,20 @@ class PenReport:
     HTML, PDF y Markdown.
     """
 
-    def __init__(self, meta: ReportMeta, verbose: bool = False) -> None:
-        self.meta = meta
+    def __init__(
+        self,
+        meta:    ReportMeta,
+        verbose: bool = False,
+        sector:  str  = "generic",
+        gpg_key: str  = "",
+    ) -> None:
+        self.meta    = meta
         self.verbose = verbose
-        self.findings: List[Finding] = []
+        # Sector para ajuste de lenguaje, marco regulatorio y priorización
+        self.sector  = sector if sector in SECTOR_PROFILES else "generic"
+        # ID de clave GPG para firma del informe (vacío = sin firma)
+        self.gpg_key = gpg_key.strip()
+        self.findings:     List[Finding]    = []
         self.tool_results: List[ToolResult] = []
 
     # ------------------------------------------------------------------
@@ -682,6 +809,138 @@ class PenReport:
         print()
 
     # ------------------------------------------------------------------
+    # Sector templates — resumen ejecutivo y marco regulatorio
+    # ------------------------------------------------------------------
+
+    def _build_sector_summary_html(self) -> str:
+        """
+        Devuelve el párrafo HTML de resumen ejecutivo adaptado al sector.
+        Retorna cadena vacía si el sector es 'generic'.
+        """
+        profile = SECTOR_PROFILES.get(self.sector, SECTOR_PROFILES["generic"])
+        if self.sector == "generic":
+            return ""
+        nombre = profile["nombre"]
+        texto  = profile["resumen_ejecutivo"]
+        return (
+            f"<div class='sector-callout'>"
+            f"<span class='sector-badge'>{html_escape(nombre)}</span>"
+            f"<p>{texto}</p>"
+            f"</div>"
+        )
+
+    def _build_regulatory_html(self) -> str:
+        """
+        Devuelve el bloque HTML de la sección de marco regulatorio del sector.
+        Incluye qué hallazgos del informe afectan a cada normativa según
+        las palabras clave de prioridad del perfil activo.
+        """
+        profile = SECTOR_PROFILES.get(self.sector, SECTOR_PROFILES["generic"])
+        nombre  = profile["nombre"]
+        texto   = profile["marco_regulatorio"]
+
+        # Hallazgos que activan las palabras clave de prioridad extra
+        keywords = profile.get("prioridad_extra_critica", [])
+        afectados: List[Finding] = []
+        if keywords:
+            for f in self._findings_by_severity():
+                texto_buscar = (f.title + " " + f.description + " " +
+                                " ".join(f.references)).lower()
+                if any(kw.lower() in texto_buscar for kw in keywords):
+                    afectados.append(f)
+
+        afectados_html = ""
+        if afectados:
+            filas = "".join(
+                f"<tr>"
+                f"<td><span class='badge' style='background:{SEV_COLOR_HTML[f.severity]}'>"
+                f"{f.severity}</span></td>"
+                f"<td><strong>{html_escape(f.id)}</strong></td>"
+                f"<td>{html_escape(f.title[:80])}</td>"
+                f"</tr>\n"
+                for f in afectados[:20]
+            )
+            afectados_html = (
+                f"<h3>Hallazgos con impacto regulatorio prioritario</h3>"
+                f"<table class='findings-table'>"
+                f"<thead><tr><th>Severidad</th><th>ID</th><th>Título</th></tr></thead>"
+                f"<tbody>{filas}</tbody>"
+                f"</table>"
+            )
+
+        return (
+            f"<div class='regulatory-box'>"
+            f"<strong>{html_escape(nombre)} — Marco Regulatorio Aplicable</strong>"
+            f"<p style='margin-top:10px'>{texto}</p>"
+            f"</div>"
+            f"{afectados_html}"
+        )
+
+    def _build_roadmap_html_sector(self) -> str:
+        """
+        Genera el HTML del roadmap de remediación ajustado al sector activo.
+
+        En sectores como 'finanzas' y 'ecommerce', los hallazgos HIGH que
+        coincidan con palabras clave de prioridad extra se promocionan
+        visualmente a la Fase 1 con una nota de urgencia.
+        """
+        profile  = SECTOR_PROFILES.get(self.sector, SECTOR_PROFILES["generic"])
+        keywords = profile.get("prioridad_extra_critica", [])
+
+        html_out = ""
+        for phase_name, period, severities in REMEDIATION_PHASES:
+            findings = self._findings_for_phase(severities)
+            if not findings:
+                html_out += (
+                    f"<div class='phase'>"
+                    f"<div class='phase-header'>{html_escape(phase_name)}"
+                    f" <span class='phase-period'>{html_escape(period)}</span></div>"
+                    f"<p class='section-note'>Sin hallazgos en esta fase.</p>"
+                    f"</div>\n"
+                )
+                continue
+
+            items_html = ""
+            for f in findings:
+                # Determinar si este hallazgo tiene prioridad extra por sector
+                es_prioritario = (
+                    keywords and
+                    f.severity in ("HIGH", "MEDIUM") and
+                    any(kw.lower() in (f.title + " " + f.description).lower()
+                        for kw in keywords)
+                )
+                nota_sector = (
+                    f"<span class='sector-priority-note'>"
+                    f"⚠ Prioridad por sector {profile['nombre']}</span>"
+                    if es_prioritario else ""
+                )
+                items_html += (
+                    f"<div class='remed-item'>"
+                    f"<div class='remed-header'>"
+                    f"<span class='badge' style='background:{f.color_html}'>{f.severity}</span>"
+                    f" <strong>{html_escape(f.id)}</strong>"
+                    f" — {html_escape(f.title[:70])}"
+                    f"{nota_sector}"
+                    f"</div>"
+                    f"<div class='remed-detail'>"
+                    f"<span class='remed-label'>Herramienta:</span> {html_escape(f.source_tool)} | "
+                    f"<span class='remed-label'>Objetivo:</span> {html_escape(f.target)}"
+                    f"</div>"
+                    f"<div class='remed-fix'>{html_escape(f.remediation[:300])}</div>"
+                    f"</div>\n"
+                )
+
+            html_out += (
+                f"<div class='phase'>"
+                f"<div class='phase-header'>{html_escape(phase_name)}"
+                f" <span class='phase-period'>{html_escape(period)}</span></div>"
+                f"{items_html}"
+                f"</div>\n"
+            )
+
+        return html_out
+
+    # ------------------------------------------------------------------
     # Generación de HTML
     # ------------------------------------------------------------------
 
@@ -689,6 +948,7 @@ class PenReport:
         """
         Genera el informe completo en formato HTML imprimible.
         Si executive_only=True, omite la sección de hallazgos técnicos.
+        Opcionalmente firma el fichero con GPG si self.gpg_key está definido.
         """
         counts = self._severity_counts()
         score  = self.risk_score()
@@ -698,6 +958,50 @@ class PenReport:
         with open(filepath, "w", encoding="utf-8") as fh:
             fh.write(html)
         cprint(f"  [+] HTML generado: {filepath}", Color.GREEN)
+
+        # Firma GPG opcional
+        if self.gpg_key:
+            self._sign_gpg(filepath)
+
+    def _sign_gpg(self, filepath: str) -> None:
+        """
+        Firma el fichero HTML con GPG generando un fichero .asc contiguo.
+
+        Ejecuta: gpg --detach-sign --armor --local-user KEY_ID fichero.html
+        Si gpg no está instalado o falla, emite un warning pero no aborta.
+        """
+        import shutil as _shutil
+        import subprocess as _subprocess
+
+        if not _shutil.which("gpg"):
+            cprint("  [!] gpg no encontrado en PATH — no se firmará el informe.", Color.YELLOW)
+            return
+
+        asc_path = filepath + ".asc"
+        # Eliminar firma previa si existe para evitar errores de sobreescritura
+        try:
+            Path(asc_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        try:
+            result = _subprocess.run(
+                ["gpg", "--detach-sign", "--armor",
+                 "--local-user", self.gpg_key, filepath],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                cprint(
+                    f"  [+] Firma GPG generada: {asc_path} "
+                    f"(clave: {self.gpg_key})",
+                    Color.GREEN,
+                )
+            else:
+                stderr = result.stderr.decode("utf-8", errors="replace")[:300]
+                cprint(f"  [!] gpg retornó código {result.returncode}: {stderr}", Color.YELLOW)
+        except Exception as exc:
+            cprint(f"  [!] Error al firmar con GPG: {exc}", Color.YELLOW)
 
     def _build_html(
         self,
@@ -742,8 +1046,13 @@ class PenReport:
                 f"</tr>\n"
             )
 
-        # --- Roadmap de remediación ---
-        roadmap_html = self._build_roadmap_html()
+        # --- Roadmap de remediación (con ajuste de sector si procede) ---
+        roadmap_html = self._build_roadmap_html_sector()
+
+        # --- Contenido específico del sector ---
+        sector_summary_html    = self._build_sector_summary_html()
+        regulatory_html        = self._build_regulatory_html()
+        has_regulatory         = bool(regulatory_html)
 
         # --- Hallazgos técnicos ---
         technical_html = "" if executive_only else self._build_technical_html()
@@ -752,23 +1061,26 @@ class PenReport:
         attack_html      = self._build_attack_html()
         has_attack       = bool(attack_html)
 
-        # Numeración dinámica de secciones
-        sec_exec      = 1
-        sec_roadmap   = 2
-        sec_attack    = 3 if has_attack else None
-        _offset       = 1 if has_attack else 0
-        sec_technical = (3 + _offset) if not executive_only else None
-        sec_method    = 3 + _offset + (1 if not executive_only else 0)
-        sec_disclaim  = sec_method + 1
+        # Numeración dinámica de secciones (considerando sección regulatoria)
+        sec_exec       = 1
+        sec_roadmap    = 2
+        _reg_offset    = 1 if has_regulatory else 0
+        sec_regulatory = 3 if has_regulatory else None
+        sec_attack     = (3 + _reg_offset) if has_attack else None
+        _atk_offset    = 1 if has_attack else 0
+        sec_technical  = (3 + _reg_offset + _atk_offset) if not executive_only else None
+        sec_method     = 3 + _reg_offset + _atk_offset + (1 if not executive_only else 0)
+        sec_disclaim   = sec_method + 1
 
         # --- Índice de contenidos ---
         toc_items = [
-            (f'<a href="#exec-summary">{sec_exec}. Resumen Ejecutivo</a>',  True),
-            (f'<a href="#roadmap">{sec_roadmap}. Roadmap de Remediación</a>', True),
-            (f'<a href="#attack">{sec_attack}. Cobertura MITRE ATT&CK</a>',  has_attack),
-            (f'<a href="#technical">{sec_technical}. Hallazgos Técnicos</a>', not executive_only),
-            (f'<a href="#methodology">{sec_method}. Metodología</a>',         True),
-            (f'<a href="#disclaimer">{sec_disclaim}. Disclaimer</a>',         True),
+            (f'<a href="#exec-summary">{sec_exec}. Resumen Ejecutivo</a>',     True),
+            (f'<a href="#roadmap">{sec_roadmap}. Roadmap de Remediación</a>',  True),
+            (f'<a href="#regulatory">{sec_regulatory}. Marco Regulatorio</a>', has_regulatory),
+            (f'<a href="#attack">{sec_attack}. Cobertura MITRE ATT&CK</a>',    has_attack),
+            (f'<a href="#technical">{sec_technical}. Hallazgos Técnicos</a>',  not executive_only),
+            (f'<a href="#methodology">{sec_method}. Metodología</a>',          True),
+            (f'<a href="#disclaimer">{sec_disclaim}. Disclaimer</a>',          True),
         ]
         toc_html = "<ul class='toc-list'>"
         for item, show in toc_items:
@@ -892,6 +1204,7 @@ class PenReport:
       </tbody>
     </table>
   </div>
+  {sector_summary_html}
 </div>
 
 <!-- ===== ROADMAP DE REMEDIACIÓN ===== -->
@@ -899,6 +1212,16 @@ class PenReport:
   <h1 class="section-title">{sec_roadmap}. Roadmap de Remediación</h1>
   {roadmap_html}
 </div>
+
+<!-- ===== MARCO REGULATORIO (solo si hay perfil de sector activo) ===== -->
+{"" if not has_regulatory else f'''
+<div class="section page-break-before" id="regulatory">
+  <h1 class="section-title">{sec_regulatory}. Marco Regulatorio</h1>
+  <p class="section-note">Esta sección describe el marco normativo aplicable al sector
+  identificado y los hallazgos del informe con mayor impacto regulatorio.</p>
+  {regulatory_html}
+</div>
+'''}
 
 <!-- ===== COBERTURA MITRE ATT&CK ===== -->
 {"" if not has_attack else f'''
@@ -968,6 +1291,9 @@ class PenReport:
 <!-- ===== PIE DE PÁGINA ===== -->
 <div class="report-footer">
   {COPYRIGHT} · Generado el {now}
+  {"" if not self.gpg_key else
+   f"<div class='gpg-note'>Este informe puede verificarse con: "
+   f"<code>gpg --verify report.html.asc report.html</code></div>"}
 </div>
 
 </body>
@@ -1295,6 +1621,102 @@ class PenReport:
       font-size: 0.8em;
       border-top: 1px solid #e2e8f0;
       margin-top: 20px;
+    }
+
+    /* ===== SECTOR TEMPLATES ===== */
+    .sector-callout {
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      border-left: 4px solid #16a34a;
+      padding: 14px 18px;
+      border-radius: 0 8px 8px 0;
+      margin-top: 16px;
+      font-size: 0.92em;
+    }
+    .sector-badge {
+      display: inline-block;
+      background: #16a34a;
+      color: #fff;
+      font-size: 0.78em;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 2px 10px;
+      border-radius: 3px;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+    .regulatory-box {
+      background: #eff6ff;
+      border: 1px solid #93c5fd;
+      border-left: 4px solid #2563eb;
+      padding: 16px 20px;
+      border-radius: 0 8px 8px 0;
+      margin-bottom: 18px;
+      font-size: 0.92em;
+      line-height: 1.7;
+    }
+    .sector-priority-note {
+      display: inline-block;
+      margin-left: 10px;
+      font-size: 0.76em;
+      color: #b45309;
+      font-weight: 600;
+    }
+    /* Fases del roadmap (usadas por _build_roadmap_html_sector) */
+    .phase {
+      margin-bottom: 20px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .phase-header {
+      background: #f1f5f9;
+      padding: 10px 16px;
+      font-weight: 700;
+      font-size: 0.95em;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .phase-period {
+      font-size: 0.82em;
+      color: #64748b;
+      font-weight: 400;
+      margin-left: 8px;
+    }
+    .remed-item {
+      padding: 10px 16px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .remed-item:last-child { border-bottom: none; }
+    .remed-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9em;
+      flex-wrap: wrap;
+    }
+    .remed-detail {
+      font-size: 0.8em;
+      color: #64748b;
+      margin-top: 4px;
+    }
+    .remed-label { font-weight: 600; }
+    .remed-fix {
+      font-size: 0.85em;
+      color: #374151;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed #e2e8f0;
+    }
+    /* Nota pie GPG */
+    .gpg-note {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 0.82em;
+      color: #475569;
+      margin-top: 16px;
+      font-family: 'Courier New', monospace;
     }
 
     /* ===== PRINT ===== */
@@ -2076,6 +2498,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Modo detallado",
     )
 
+    # Sector template
+    sectores = list(SECTOR_PROFILES.keys())
+    parser.add_argument(
+        "--sector",
+        default="generic",
+        choices=sectores,
+        metavar="SECTOR",
+        help=(
+            f"Sector del cliente para ajustar el lenguaje ejecutivo, el marco "
+            f"regulatorio y la priorización del roadmap. "
+            f"Valores: {', '.join(sectores)} (default: generic)"
+        ),
+    )
+
+    # Firma GPG
+    parser.add_argument(
+        "--gpg-key",
+        default="",
+        metavar="KEY_ID",
+        dest="gpg_key",
+        help=(
+            "ID de clave GPG para firmar el informe HTML. "
+            "Genera report.html.asc contiguo al informe. "
+            "Si gpg no está instalado emite warning y continúa. "
+            "(Opcional; sin este flag no se firma)"
+        ),
+    )
+
     return parser
 
 
@@ -2117,8 +2567,11 @@ def main() -> int:
         logo_b64=logo_b64,
     )
 
-    # Crear instancia de PenReport
-    report = PenReport(meta=meta, verbose=args.verbose)
+    # Crear instancia de PenReport con sector y clave GPG si se han proporcionado
+    sector  = getattr(args, "sector",  "generic")
+    gpg_key = getattr(args, "gpg_key", "")
+    report = PenReport(meta=meta, verbose=args.verbose,
+                       sector=sector, gpg_key=gpg_key)
 
     # Cargar ficheros de entrada
     cprint(f"  Cargando {len(args.INPUT)} fichero(s)...", Color.CYAN)
