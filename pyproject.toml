@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vamp-penreport"
-version = "2.2"
-description = "Penetration test report generator for VampSecure Labs assessments"
+version = "2.3"
+description = "Penetration test report generator for VampSecure Labs assessments (incl. CVSS 3.1 calculator)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"

@@ -37,7 +37,7 @@ from html import escape as html_escape
 # Constantes y configuración
 # ---------------------------------------------------------------------------
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 COPYRIGHT = "© VampSecure Studios — VampSecure Labs Security Research Division"
 DISCLAIMER = (
     "Este informe es CONFIDENCIAL y está destinado exclusivamente al cliente indicado. "
@@ -274,7 +274,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-penreport v2.2 · Penetration Testing Report Generator
+  vamp-penreport v2.3 · Penetration Testing Report Generator
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -2529,8 +2529,367 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# =============================================================================
+# CALCULADORA CVSS 3.1
+# =============================================================================
+
+# Valores numéricos de las métricas base CVSS 3.1
+# Fuente: CVSS v3.1 Specification Document (FIRST.org)
+_CVSS31_AV = {
+    "N": 0.85,   # Network
+    "A": 0.62,   # Adjacent
+    "L": 0.55,   # Local
+    "P": 0.20,   # Physical
+}
+
+_CVSS31_AC = {
+    "L": 0.77,   # Low
+    "H": 0.44,   # High
+}
+
+# PR depende del Scope: U=Unchanged, C=Changed
+_CVSS31_PR = {
+    "U": {"N": 0.85, "L": 0.62, "H": 0.27},
+    "C": {"N": 0.85, "L": 0.68, "H": 0.50},
+}
+
+_CVSS31_UI = {
+    "N": 0.85,   # None
+    "R": 0.62,   # Required
+}
+
+# Impacto: None, Low, High — idéntico para C, I y A
+_CVSS31_CIA = {
+    "N": 0.00,
+    "L": 0.22,
+    "H": 0.56,
+}
+
+
+def _roundup(x: float) -> float:
+    """
+    Función roundup de CVSS 3.1: redondea al primer decimal superior.
+    Equivalente a ceil(x * 10) / 10.
+    """
+    import math
+    return math.ceil(round(x * 10, 10)) / 10
+
+
+def _severidad_cvss(score: float) -> str:
+    """Devuelve la etiqueta de severidad para un score CVSS 3.1 dado."""
+    if score == 0.0:
+        return "None"
+    elif score <= 3.9:
+        return "Low"
+    elif score <= 6.9:
+        return "Medium"
+    elif score <= 8.9:
+        return "High"
+    else:
+        return "Critical"
+
+
+def _color_severidad(sev: str) -> str:
+    """Color ANSI para una severidad CVSS."""
+    mapa = {
+        "Critical": Color.RED,
+        "High":     Color.ORANGE,
+        "Medium":   Color.YELLOW,
+        "Low":      Color.BLUE,
+        "None":     Color.GREY,
+    }
+    return mapa.get(sev, Color.RESET)
+
+
+def calc_cvss31_base_score(
+    av: str, ac: str, pr: str, ui: str,
+    s: str, c: str, i: str, a: str,
+) -> float:
+    """
+    Calcula el CVSS 3.1 Base Score a partir de los valores de métrica.
+
+    Parámetros (valores abreviados CVSS 3.1)
+    -----------------------------------------
+    av : AV (Attack Vector)        — N|A|L|P
+    ac : AC (Attack Complexity)    — L|H
+    pr : PR (Privileges Required)  — N|L|H
+    ui : UI (User Interaction)     — N|R
+    s  : S  (Scope)                — U|C
+    c  : C  (Confidentiality)      — N|L|H
+    i  : I  (Integrity)            — N|L|H
+    a  : A  (Availability)         — N|L|H
+
+    Retorna el score redondeado según _roundup.
+    Lanza ValueError si algún valor de métrica es inválido.
+    """
+    # Validar y obtener valores numéricos
+    errores = []
+    if av.upper() not in _CVSS31_AV:
+        errores.append(f"AV inválido: {av!r} (N|A|L|P)")
+    if ac.upper() not in _CVSS31_AC:
+        errores.append(f"AC inválido: {ac!r} (L|H)")
+    scope = s.upper()
+    if scope not in ("U", "C"):
+        errores.append(f"S inválido: {s!r} (U|C)")
+    if pr.upper() not in _CVSS31_PR.get(scope, {}):
+        errores.append(f"PR inválido: {pr!r} (N|L|H)")
+    if ui.upper() not in _CVSS31_UI:
+        errores.append(f"UI inválido: {ui!r} (N|R)")
+    if c.upper() not in _CVSS31_CIA:
+        errores.append(f"C inválido: {c!r} (N|L|H)")
+    if i.upper() not in _CVSS31_CIA:
+        errores.append(f"I inválido: {i!r} (N|L|H)")
+    if a.upper() not in _CVSS31_CIA:
+        errores.append(f"A inválido: {a!r} (N|L|H)")
+    if errores:
+        raise ValueError("Error en las métricas CVSS 3.1:\n  " + "\n  ".join(errores))
+
+    av_v  = _CVSS31_AV[av.upper()]
+    ac_v  = _CVSS31_AC[ac.upper()]
+    pr_v  = _CVSS31_PR[scope][pr.upper()]
+    ui_v  = _CVSS31_UI[ui.upper()]
+    c_v   = _CVSS31_CIA[c.upper()]
+    i_v   = _CVSS31_CIA[i.upper()]
+    a_v   = _CVSS31_CIA[a.upper()]
+
+    # ISCBase = 1 - [(1-C) * (1-I) * (1-A)]
+    isc_base = 1.0 - (1.0 - c_v) * (1.0 - i_v) * (1.0 - a_v)
+
+    # ISC depende del Scope
+    if scope == "U":
+        isc = 6.42 * isc_base
+    else:
+        isc = 7.52 * (isc_base - 0.029) - 3.25 * (isc_base - 0.02) ** 15.0
+
+    # Si ISC <= 0, el score base es 0
+    if isc <= 0:
+        return 0.0
+
+    # ESC = 8.22 * AV * AC * PR * UI
+    esc = 8.22 * av_v * ac_v * pr_v * ui_v
+
+    # Score base
+    if scope == "U":
+        raw = min(isc + esc, 10.0)
+    else:
+        raw = min(1.08 * (isc + esc), 10.0)
+
+    return _roundup(raw)
+
+
+def _parse_vector_cvss31(vector: str) -> dict:
+    """
+    Parsea un vector CVSS 3.1 en formato abreviado.
+    Acepta con o sin prefijo 'CVSS:3.1/'.
+    Ejemplo: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H'
+    Retorna diccionario {av, ac, pr, ui, s, c, i, a}.
+    """
+    # Eliminar prefijo opcional
+    v = vector.strip()
+    if v.upper().startswith("CVSS:3.1/"):
+        v = v[len("CVSS:3.1/"):]
+    elif v.upper().startswith("CVSS:3.0/"):
+        v = v[len("CVSS:3.0/"):]
+
+    partes = {}
+    for parte in v.split("/"):
+        if ":" not in parte:
+            continue
+        clave, valor = parte.split(":", 1)
+        partes[clave.upper()] = valor.upper()
+
+    esperados = ("AV", "AC", "PR", "UI", "S", "C", "I", "A")
+    faltantes = [k for k in esperados if k not in partes]
+    if faltantes:
+        raise ValueError(
+            f"Vector CVSS 3.1 incompleto. Faltan: {', '.join(faltantes)}\n"
+            "Formato esperado: AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        )
+
+    return {
+        "av": partes["AV"],
+        "ac": partes["AC"],
+        "pr": partes["PR"],
+        "ui": partes["UI"],
+        "s":  partes["S"],
+        "c":  partes["C"],
+        "i":  partes["I"],
+        "a":  partes["A"],
+    }
+
+
+def cmd_cvss(argv: list) -> int:
+    """
+    Subcomando 'cvss': calcula el CVSS 3.1 Base Score y muestra resultado detallado.
+
+    Uso:
+        vamp-penreport cvss --av N --ac L --pr N --ui N --s U --c H --i H --a H
+        vamp-penreport cvss --vector AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H
+    """
+    p = argparse.ArgumentParser(
+        prog="vamp-penreport cvss",
+        description="Calculadora CVSS 3.1 Base Score — VampSecure Labs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Ejemplos:\n"
+            "  vamp-penreport cvss --av N --ac L --pr N --ui N --s U --c H --i H --a H\n"
+            "  vamp-penreport cvss --vector AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H\n"
+            "\n"
+            "Valores de métrica:\n"
+            "  AV: N (Network) | A (Adjacent) | L (Local) | P (Physical)\n"
+            "  AC: L (Low) | H (High)\n"
+            "  PR: N (None) | L (Low) | H (High)\n"
+            "  UI: N (None) | R (Required)\n"
+            "  S:  U (Unchanged) | C (Changed)\n"
+            "  C/I/A: N (None) | L (Low) | H (High)\n"
+        ),
+    )
+    p.add_argument("--vector",
+                   metavar="CVSS_VECTOR",
+                   help="Vector CVSS 3.1 completo, ej: AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
+    p.add_argument("--av", metavar="METRIC",
+                   help="Attack Vector: N|A|L|P")
+    p.add_argument("--ac", metavar="METRIC",
+                   help="Attack Complexity: L|H")
+    p.add_argument("--pr", metavar="METRIC",
+                   help="Privileges Required: N|L|H")
+    p.add_argument("--ui", metavar="METRIC",
+                   help="User Interaction: N|R")
+    p.add_argument("--s",  metavar="METRIC",
+                   help="Scope: U|C")
+    p.add_argument("--c",  metavar="METRIC",
+                   help="Confidentiality: N|L|H")
+    p.add_argument("--i",  metavar="METRIC",
+                   help="Integrity: N|L|H")
+    p.add_argument("--a",  metavar="METRIC",
+                   help="Availability: N|L|H")
+
+    args = p.parse_args(argv)
+
+    # Obtener parámetros desde --vector o individualmente
+    if args.vector:
+        try:
+            metricas = _parse_vector_cvss31(args.vector)
+        except ValueError as exc:
+            cprint(f"\n  [!] {exc}", Color.RED)
+            return 1
+    else:
+        # Verificar que se han proporcionado todas las métricas individuales
+        campos = ("av", "ac", "pr", "ui", "s", "c", "i", "a")
+        faltantes = [f"--{f}" for f in campos if getattr(args, f) is None]
+        if faltantes:
+            cprint(
+                f"\n  [!] Debes proporcionar --vector o todas las métricas individuales.\n"
+                f"      Faltan: {', '.join(faltantes)}",
+                Color.RED,
+            )
+            p.print_help()
+            return 1
+        metricas = {f: getattr(args, f) for f in campos}
+
+    # Calcular score
+    try:
+        score = calc_cvss31_base_score(**metricas)
+    except ValueError as exc:
+        cprint(f"\n  [!] {exc}", Color.RED)
+        return 1
+
+    sev = _severidad_cvss(score)
+    col_sev = _color_severidad(sev)
+
+    # -------------------------------------------------------------------------
+    # Construir vector CVSS para mostrar
+    # -------------------------------------------------------------------------
+    av, ac, pr, ui, s_, c_, i_, a_ = (
+        metricas["av"].upper(), metricas["ac"].upper(), metricas["pr"].upper(),
+        metricas["ui"].upper(), metricas["s"].upper(), metricas["c"].upper(),
+        metricas["i"].upper(), metricas["a"].upper(),
+    )
+    vector_str = f"AV:{av}/AC:{ac}/PR:{pr}/UI:{ui}/S:{s_}/C:{c_}/I:{i_}/A:{a_}"
+
+    # Nombres completos de las métricas para la tabla
+    _AV_NOMBRES = {"N": "Network", "A": "Adjacent", "L": "Local", "P": "Physical"}
+    _AC_NOMBRES = {"L": "Low", "H": "High"}
+    _PR_NOMBRES = {"N": "None", "L": "Low", "H": "High"}
+    _UI_NOMBRES = {"N": "None", "R": "Required"}
+    _S_NOMBRES  = {"U": "Unchanged", "C": "Changed"}
+    _CIA_NOMBRES = {"N": "None", "L": "Low", "H": "High"}
+
+    # -------------------------------------------------------------------------
+    # Salida formateada con ANSI (no requiere Rich)
+    # -------------------------------------------------------------------------
+    SEP  = "  " + "─" * 62
+    SEP2 = "  " + "═" * 62
+
+    cprint(f"\n{SEP2}", Color.CYAN)
+    cprint(f"  {'CVSS 3.1 Base Score':^62}", Color.CYAN, bold=True)
+    cprint(f"{SEP2}", Color.CYAN)
+
+    # Score prominente
+    score_label = f"{score:.1f}"
+    cprint(
+        f"\n  {'Score:':<20}",
+        Color.WHITE,
+        bold=True,
+    )
+    # Imprimir score en color de severidad, grande
+    print(f"  {Color.BOLD}{col_sev}{score_label:>8}  /  10.0{Color.RESET}")
+    cprint(
+        f"  {'Severidad:':<20}{sev}",
+        col_sev,
+        bold=True,
+    )
+    cprint(
+        f"  {'Vector:':<20}{vector_str}",
+        Color.GREY,
+    )
+
+    # Tabla de métricas
+    cprint(f"\n{SEP}", Color.CYAN)
+    cprint(f"  {'Métrica':<32} {'Valor':<12} {'Código'}", Color.WHITE, bold=True)
+    cprint(SEP, Color.CYAN)
+
+    filas = [
+        ("Attack Vector (AV)",        _AV_NOMBRES.get(av, av),     av),
+        ("Attack Complexity (AC)",     _AC_NOMBRES.get(ac, ac),     ac),
+        ("Privileges Required (PR)",   _PR_NOMBRES.get(pr, pr),     pr),
+        ("User Interaction (UI)",      _UI_NOMBRES.get(ui, ui),     ui),
+        ("Scope (S)",                  _S_NOMBRES.get(s_, s_),      s_),
+        ("Confidentiality (C)",        _CIA_NOMBRES.get(c_, c_),    c_),
+        ("Integrity (I)",              _CIA_NOMBRES.get(i_, i_),    i_),
+        ("Availability (A)",           _CIA_NOMBRES.get(a_, a_),    a_),
+    ]
+    for nombre, valor, codigo in filas:
+        cprint(f"  {nombre:<32} {valor:<12} {codigo}", Color.WHITE)
+
+    cprint(SEP, Color.CYAN)
+
+    # Línea de referencia de severidad
+    cprint(f"\n  Escala CVSS 3.1:", Color.GREY)
+    escala = [
+        ("None",     "0.0",      Color.GREY),
+        ("Low",      "0.1-3.9",  Color.BLUE),
+        ("Medium",   "4.0-6.9",  Color.YELLOW),
+        ("High",     "7.0-8.9",  Color.ORANGE),
+        ("Critical", "9.0-10.0", Color.RED),
+    ]
+    linea_escala = "  "
+    for etiq, rango, col in escala:
+        marcador = " ◀ " if etiq == sev else "   "
+        linea_escala += f"{col}{Color.BOLD if etiq == sev else ''}{etiq} ({rango}){Color.RESET}  "
+    print(linea_escala)
+    cprint(f"\n{SEP2}\n", Color.CYAN)
+
+    return 0
+
+
 def main() -> int:
     """Función principal del CLI."""
+    # Intercepción del subcomando 'cvss' antes del parseo normal
+    if len(sys.argv) > 1 and sys.argv[1] == "cvss":
+        print_banner()
+        return cmd_cvss(sys.argv[2:])
+
     print_banner()
 
     parser = build_parser()
