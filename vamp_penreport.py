@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# © VampSecure Studios — VampSecure Labs Security Research Division
 # -*- coding: utf-8 -*-
 """
 VampSecure Labs — PenReport
@@ -37,7 +38,7 @@ from html import escape as html_escape
 # Constantes y configuración
 # ---------------------------------------------------------------------------
 
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 COPYRIGHT = "© VampSecure Studios — VampSecure Labs Security Research Division"
 DISCLAIMER = (
     "Este informe es CONFIDENCIAL y está destinado exclusivamente al cliente indicado. "
@@ -274,7 +275,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-penreport v2.3 · Penetration Testing Report Generator
+  vamp-penreport v2.4 · Penetration Testing Report Generator
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -939,6 +940,229 @@ class PenReport:
             )
 
         return html_out
+
+    # ------------------------------------------------------------------
+    # Exportación a Jira
+    # ------------------------------------------------------------------
+
+    def export_to_jira(
+        self,
+        base_url: str,
+        project_key: str,
+        jira_user: str,
+        jira_token: str,
+        verbose: bool = False,
+    ) -> list:
+        """
+        Crea issues en Jira para cada hallazgo HIGH o CRITICAL del informe.
+
+        Parámetros
+        ----------
+        base_url    : URL base de la instancia Jira (ej: https://mycompany.atlassian.net)
+        project_key : Clave del proyecto Jira (ej: SEC)
+        jira_user   : Email del usuario Jira con permisos de escritura
+        jira_token  : Token API de Jira (generado en id.atlassian.com)
+        verbose     : Mostrar detalles de cada petición
+
+        Retorna lista de URLs de issues creados en Jira.
+        """
+        import urllib.request as _ureq
+        import base64 as _b64
+        import json as _json
+
+        # Construir cabecera de autenticación Basic para la API de Jira
+        _creds = _b64.b64encode(f"{jira_user}:{jira_token}".encode()).decode()
+        _headers = {
+            "Authorization": f"Basic {_creds}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        # Mapeo de severidades VSL a prioridades Jira
+        _PRIORIDAD = {
+            "CRITICAL": "Blocker",
+            "HIGH":     "High",
+        }
+
+        # URL del endpoint de creación de issues
+        _api_url = base_url.rstrip("/") + "/rest/api/2/issue"
+
+        issues_creados: list = []
+
+        # Solo hallazgos HIGH y CRITICAL
+        hallazgos_export = [
+            f for f in self._findings_by_severity()
+            if f.severity in ("CRITICAL", "HIGH")
+        ]
+
+        if not hallazgos_export:
+            cprint("  [i] No hay hallazgos HIGH/CRITICAL para exportar a Jira.", Color.YELLOW)
+            return issues_creados
+
+        cprint(
+            f"  Exportando {len(hallazgos_export)} hallazgo(s) a Jira "
+            f"(proyecto {project_key})...",
+            Color.CYAN,
+        )
+
+        for hallazgo in hallazgos_export:
+            # Construir descripción del issue
+            desc = (
+                f"*Descripción*\n{hallazgo.description}\n\n"
+                f"*CVSS Estimado*: {hallazgo.cvss_estimate}\n\n"
+                f"*Evidencia*\n{{code}}\n{hallazgo.evidence[:2000]}\n{{code}}\n\n"
+                f"*Remediación*\n{hallazgo.remediation}\n\n"
+                f"*Herramienta*: {hallazgo.source_tool} · *Objetivo*: {hallazgo.target}\n"
+                f"*Informe*: {self.meta.engagement} — {self.meta.client}\n"
+                f"*ID VSL*: {hallazgo.id}"
+            )
+
+            payload = {
+                "fields": {
+                    "project":     {"key": project_key},
+                    "summary":     f"[VSL] {hallazgo.title[:200]}",
+                    "description": desc,
+                    "issuetype":   {"name": "Bug"},
+                    "priority":    {"name": _PRIORIDAD.get(hallazgo.severity, "High")},
+                    "labels":      ["vampsecure-labs", hallazgo.severity.lower()],
+                }
+            }
+
+            body = _json.dumps(payload).encode("utf-8")
+
+            try:
+                req = _ureq.Request(_api_url, data=body, headers=_headers, method="POST")
+                with _ureq.urlopen(req, timeout=15) as resp:
+                    data = _json.loads(resp.read().decode("utf-8"))
+                    issue_key = data.get("key", "")
+                    issue_url = base_url.rstrip("/") + f"/browse/{issue_key}"
+                    issues_creados.append(issue_url)
+                    cprint(
+                        f"  [+] Issue creado: {issue_key} — {hallazgo.title[:60]}",
+                        Color.GREEN,
+                    )
+                    if verbose:
+                        cprint(f"      URL: {issue_url}", Color.GREY)
+            except Exception as exc:
+                cprint(
+                    f"  [!] Error creando issue para '{hallazgo.id}': {exc}",
+                    Color.RED,
+                )
+
+        cprint(
+            f"  [+] Exportación Jira completada: {len(issues_creados)} "
+            f"issue(s) creados.",
+            Color.GREEN,
+        )
+        return issues_creados
+
+    # ------------------------------------------------------------------
+    # Exportación a DefectDojo
+    # ------------------------------------------------------------------
+
+    def export_to_defectdojo(
+        self,
+        base_url: str,
+        api_token: str,
+        engagement_id: int,
+        verbose: bool = False,
+    ) -> int:
+        """
+        Crea findings en DefectDojo para todos los hallazgos del informe.
+
+        Parámetros
+        ----------
+        base_url      : URL base de la instancia DefectDojo (ej: https://dojo.ejemplo.com)
+        api_token     : Token API de DefectDojo (Profile → API v2 Key)
+        engagement_id : ID del engagement en DefectDojo donde registrar los hallazgos
+        verbose       : Mostrar detalles de cada petición
+
+        Retorna el número de findings creados exitosamente.
+        """
+        import urllib.request as _ureq
+        import json as _json
+        import datetime as _dt
+
+        # Cabeceras de autenticación para la API REST v2 de DefectDojo
+        _headers = {
+            "Authorization": f"Token {api_token}",
+            "Content-Type": "application/json",
+        }
+
+        # Mapeo de severidades VSL → DefectDojo
+        _SEV_MAP = {
+            "CRITICAL": "Critical",
+            "HIGH":     "High",
+            "MEDIUM":   "Medium",
+            "LOW":      "Low",
+            "INFO":     "Info",
+        }
+
+        _api_url = base_url.rstrip("/") + "/api/v2/findings/"
+        _fecha_hoy = _dt.date.today().isoformat()
+        creados = 0
+
+        cprint(
+            f"  Exportando {len(self.findings)} hallazgo(s) a DefectDojo "
+            f"(engagement {engagement_id})...",
+            Color.CYAN,
+        )
+
+        for hallazgo in self._findings_by_severity():
+            payload = {
+                "title":           f"{hallazgo.title[:200]}",
+                "description":     hallazgo.description or "(sin descripción)",
+                "severity":        _SEV_MAP.get(hallazgo.severity, "Medium"),
+                "numerical_severity": (
+                    "S0" if hallazgo.severity == "CRITICAL" else
+                    "S1" if hallazgo.severity == "HIGH" else
+                    "S2" if hallazgo.severity == "MEDIUM" else
+                    "S3"
+                ),
+                "mitigation":      hallazgo.remediation or "",
+                "references":      "\n".join(hallazgo.references),
+                "impact":          f"Objetivo: {hallazgo.target}",
+                "steps_to_reproduce": hallazgo.evidence[:2000],
+                "test":            engagement_id,   # DefectDojo acepta engagement como test en v2
+                "engagement":      engagement_id,
+                "found_by":        [],
+                "date":            _fecha_hoy,
+                "active":          True,
+                "verified":        False,
+                "false_p":         False,
+                "duplicate":       False,
+                "out_of_scope":    False,
+                "static_finding":  True,
+                "vuln_id_from_tool": hallazgo.id,
+                "scanner_confidence": 1,
+                "tags":            ["vampsecure-labs", hallazgo.source_tool],
+            }
+
+            body = _json.dumps(payload).encode("utf-8")
+
+            try:
+                req = _ureq.Request(_api_url, data=body, headers=_headers, method="POST")
+                with _ureq.urlopen(req, timeout=15) as resp:
+                    data = _json.loads(resp.read().decode("utf-8"))
+                    dojo_id = data.get("id", "?")
+                    creados += 1
+                    if verbose:
+                        cprint(
+                            f"  [+] Finding #{dojo_id} creado: {hallazgo.id} — {hallazgo.title[:50]}",
+                            Color.GREEN,
+                        )
+            except Exception as exc:
+                cprint(
+                    f"  [!] Error creando finding '{hallazgo.id}' en DefectDojo: {exc}",
+                    Color.RED,
+                )
+
+        cprint(
+            f"  [+] Exportación DefectDojo completada: {creados} "
+            f"finding(s) creados.",
+            Color.GREEN,
+        )
+        return creados
 
     # ------------------------------------------------------------------
     # Generación de HTML
@@ -2512,6 +2736,64 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Exportación a Jira
+    jira_grp = parser.add_argument_group("Exportación Jira (hallazgos HIGH/CRITICAL)")
+    jira_grp.add_argument(
+        "--export-jira",
+        default="",
+        metavar="URL",
+        dest="export_jira",
+        help="URL base de la instancia Jira (ej: https://mycompany.atlassian.net). "
+             "Activa la exportación automática de hallazgos HIGH/CRITICAL.",
+    )
+    jira_grp.add_argument(
+        "--jira-project",
+        default="SEC",
+        metavar="KEY",
+        dest="jira_project",
+        help="Clave del proyecto Jira donde crear los issues (default: SEC)",
+    )
+    jira_grp.add_argument(
+        "--jira-user",
+        default="",
+        metavar="EMAIL",
+        dest="jira_user",
+        help="Email del usuario Jira con permisos de creación de issues",
+    )
+    jira_grp.add_argument(
+        "--jira-token",
+        default="",
+        metavar="TOKEN",
+        dest="jira_token",
+        help="Token API de Jira (generado en id.atlassian.com → API tokens)",
+    )
+
+    # Exportación a DefectDojo
+    dojo_grp = parser.add_argument_group("Exportación DefectDojo")
+    dojo_grp.add_argument(
+        "--export-dojo",
+        default="",
+        metavar="URL",
+        dest="export_dojo",
+        help="URL base de la instancia DefectDojo (ej: https://dojo.ejemplo.com). "
+             "Activa la exportación de todos los hallazgos.",
+    )
+    dojo_grp.add_argument(
+        "--dojo-token",
+        default="",
+        metavar="TOKEN",
+        dest="dojo_token",
+        help="Token API de DefectDojo (Profile → API v2 Key)",
+    )
+    dojo_grp.add_argument(
+        "--dojo-engagement",
+        default=0,
+        type=int,
+        metavar="ID",
+        dest="dojo_engagement",
+        help="ID del engagement en DefectDojo donde registrar los hallazgos",
+    )
+
     # Firma GPG
     parser.add_argument(
         "--gpg-key",
@@ -2966,6 +3248,50 @@ def main() -> int:
 
     if args.report_json:
         report.to_json(args.report_json)
+
+    # Exportación a Jira (solo si se especificó --export-jira)
+    export_jira_url = getattr(args, "export_jira", "")
+    if export_jira_url:
+        jira_user  = getattr(args, "jira_user", "")
+        jira_token = getattr(args, "jira_token", "")
+        jira_proj  = getattr(args, "jira_project", "SEC")
+        if not jira_user or not jira_token:
+            cprint(
+                "  [!] --export-jira requiere --jira-user y --jira-token.",
+                Color.RED,
+            )
+        else:
+            cprint("\n  Exportando hallazgos a Jira...", Color.CYAN)
+            issue_urls = report.export_to_jira(
+                base_url=export_jira_url,
+                project_key=jira_proj,
+                jira_user=jira_user,
+                jira_token=jira_token,
+                verbose=args.verbose,
+            )
+            if issue_urls:
+                cprint("  Issues Jira creados:", Color.GREEN)
+                for url in issue_urls:
+                    cprint(f"    · {url}", Color.CYAN)
+
+    # Exportación a DefectDojo (solo si se especificó --export-dojo)
+    export_dojo_url = getattr(args, "export_dojo", "")
+    if export_dojo_url:
+        dojo_token      = getattr(args, "dojo_token", "")
+        dojo_engagement = getattr(args, "dojo_engagement", 0)
+        if not dojo_token or not dojo_engagement:
+            cprint(
+                "  [!] --export-dojo requiere --dojo-token y --dojo-engagement.",
+                Color.RED,
+            )
+        else:
+            cprint("\n  Exportando hallazgos a DefectDojo...", Color.CYAN)
+            report.export_to_defectdojo(
+                base_url=export_dojo_url,
+                api_token=dojo_token,
+                engagement_id=dojo_engagement,
+                verbose=args.verbose,
+            )
 
     print()
     cprint("  Proceso completado.", Color.GREEN, bold=True)

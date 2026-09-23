@@ -1,6 +1,7 @@
+<!-- © VampSecure Studios — VampSecure Labs Security Research Division -->
 # vamp-penreport
 
-![Version](https://img.shields.io/badge/version-2.0.0-crimson)
+![Version](https://img.shields.io/badge/version-2.4-crimson)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![VampSecure Labs](https://img.shields.io/badge/VampSecure-Labs-7c3aed)
@@ -31,6 +32,13 @@ It is **not a scanner** — it is a report aggregator and generator. It has no f
 ---
 
 ## Installation
+
+
+```bash
+pip install vamp-penreport
+# o con Homebrew:
+brew install vampsecure-labs/labs/vamp-penreport
+```
 
 ```bash
 cd vamp-penreport
@@ -219,3 +227,8 @@ MIT — See `LICENSE` file.
 © VampSecure Studios — VampSecure Labs Security Research Division
 
 *Authorized use only in environments with explicit written permission.*
+
+---
+
+## Versión
+v2.4 — VampSecure Labs Security Research Division
