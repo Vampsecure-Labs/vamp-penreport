@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<!--
+  © VampSecure Studios — VampSecure Labs Security Research Division
+  template.example.html — Plantilla de ejemplo para exportación PDF con --pdf
+
+  VARIABLES DISPONIBLES
+  ─────────────────────
+  {{cliente}}           Nombre del cliente tal como se pasó con --client
+  {{fecha}}             Fecha de generación del informe (formato YYYY-MM-DD)
+  {{hallazgos_table}}   Filas HTML (<tr>…</tr>) de la tabla de hallazgos.
+                        Cada fila tiene cuatro celdas: ID, Severidad, Título,
+                        Descripción. Las celdas de Severidad llevan la clase
+                        CSS "sev-CRITICAL", "sev-HIGH", "sev-MEDIUM", etc.
+  {{num_critical}}      Número de hallazgos con severidad CRITICAL (entero)
+  {{num_high}}          Número de hallazgos con severidad HIGH (entero)
+  {{num_total}}         Número total de hallazgos (entero)
+
+  USO
+  ───
+    vamp-penreport resultado.json --client "Empresa SA" \
+        --pdf informe.pdf \
+        --pdf-template template.example.html
+
+  Si se omite --pdf-template se usa la plantilla corporativa VSL por defecto.
+
+  NOTAS
+  ─────
+  - Esta plantilla se renderiza con weasyprint (>=60.0), que soporta un
+    subconjunto de CSS 2.1 + algunas propiedades CSS 3. No todos los
+    efectos CSS avanzados están disponibles.
+  - Para fuentes externas usa @font-face con src local() o embebe las
+    fuentes en base64.
+  - @page permite definir márgenes y contenido de cabecera/pie de página.
+  - Los paths de recursos (imágenes, CSS externo) deben ser absolutos o
+    relativos al fichero de plantilla.
+-->
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Auditoría de Seguridad — {{cliente}}</title>
+  <style>
+    /* ── Estilos de página para weasyprint ─────────────────────────── */
+    @page {
+      size: A4;
+      margin: 2cm 1.5cm;
+      @top-center {
+        content: "Auditoría de Seguridad — {{cliente}}";
+        font-size: 8pt;
+        color: #999;
+      }
+      @bottom-right {
+        content: "Página " counter(page) " de " counter(pages);
+        font-size: 8pt;
+        color: #999;
+      }
+    }
+
+    /* ── Tipografía y colores base ─────────────────────────────────── */
+    body {
+      font-family: Arial, "DejaVu Sans", sans-serif;
+      font-size: 10pt;
+      color: #222;
+      background: #fff;
+      margin: 0;
+      padding: 0;
+    }
+
+    h1 { font-size: 18pt; color: #900; margin-bottom: 0.3cm; }
+    h2 { font-size: 13pt; color: #900; border-bottom: 1px solid #900; padding-bottom: 3pt; }
+
+    /* ── Portada ───────────────────────────────────────────────────── */
+    .portada {
+      text-align: center;
+      padding: 3cm 0 2cm;
+      page-break-after: always;
+    }
+    .portada .fecha { color: #555; font-size: 10pt; margin-top: 0.5cm; }
+
+    /* ── Tabla de resumen ──────────────────────────────────────────── */
+    .resumen {
+      display: table;
+      width: 100%;
+      margin: 0.5cm 0 1cm;
+    }
+    .resumen-celda {
+      display: table-cell;
+      text-align: center;
+      padding: 0.3cm;
+      border: 1px solid #ddd;
+      border-radius: 4pt;
+    }
+    .resumen-celda .numero { font-size: 22pt; font-weight: bold; }
+    .resumen-celda .etiq   { font-size: 8pt; color: #555; }
+    .resumen-celda.crit { border-color: #900; color: #900; }
+    .resumen-celda.high { border-color: #c60; color: #c60; }
+    .resumen-celda.tot  { border-color: #336; color: #336; }
+
+    /* ── Tabla de hallazgos ────────────────────────────────────────── */
+    table.hallazgos {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9pt;
+      margin-top: 0.5cm;
+    }
+    table.hallazgos th {
+      background: #222;
+      color: #fff;
+      padding: 5pt 8pt;
+      text-align: left;
+    }
+    table.hallazgos td {
+      padding: 5pt 8pt;
+      border-bottom: 1px solid #eee;
+      vertical-align: top;
+    }
+    table.hallazgos tr:nth-child(even) td { background: #fafafa; }
+
+    /* Clases de severidad generadas por export_to_pdf() */
+    .sev-CRITICAL { color: #c00; font-weight: bold; }
+    .sev-HIGH     { color: #c60; font-weight: bold; }
+    .sev-MEDIUM   { color: #990; font-weight: bold; }
+    .sev-LOW      { color: #060; }
+    .sev-INFO     { color: #006; }
+
+    /* ── Pie de página ─────────────────────────────────────────────── */
+    .disclaimer {
+      margin-top: 2cm;
+      font-size: 7.5pt;
+      color: #aaa;
+      border-top: 1px solid #ddd;
+      padding-top: 0.3cm;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Portada -->
+  <div class="portada">
+    <h1>INFORME DE AUDITORÍA DE SEGURIDAD</h1>
+    <p><strong>Cliente:</strong> {{cliente}}</p>
+    <p class="fecha">{{fecha}}</p>
+    <p style="color:#555; font-size:9pt;">
+      © VampSecure Studios — VampSecure Labs Security Research Division<br>
+      <em>Confidencial — Solo para el cliente indicado</em>
+    </p>
+  </div>
+
+  <!-- Resumen ejecutivo -->
+  <h2>Resumen Ejecutivo</h2>
+  <div class="resumen">
+    <div class="resumen-celda crit">
+      <div class="numero">{{num_critical}}</div>
+      <div class="etiq">CRÍTICO</div>
+    </div>
+    <div class="resumen-celda high">
+      <div class="numero">{{num_high}}</div>
+      <div class="etiq">ALTO</div>
+    </div>
+    <div class="resumen-celda tot">
+      <div class="numero">{{num_total}}</div>
+      <div class="etiq">TOTAL</div>
+    </div>
+  </div>
+
+  <!-- Tabla de hallazgos -->
+  <h2>Hallazgos de Seguridad</h2>
+  <table class="hallazgos">
+    <thead>
+      <tr>
+        <th style="width:8%">ID</th>
+        <th style="width:12%">Severidad</th>
+        <th style="width:35%">Título</th>
+        <th style="width:45%">Descripción</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{hallazgos_table}}
+    </tbody>
+  </table>
+
+  <div class="disclaimer">
+    © VampSecure Studios — VampSecure Labs Security Research Division.
+    Informe CONFIDENCIAL destinado exclusivamente al cliente indicado.
+    Su distribución sin autorización expresa está prohibida.
+  </div>
+
+</body>
+</html>

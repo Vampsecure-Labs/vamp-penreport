@@ -37,6 +37,7 @@ dist/
 *~
 Thumbs.db
 
-# Excepción: input de ejemplo (no es output)
+# Excepciones: ficheros de ejemplo y plantillas (no son outputs)
 !example_input.json
+!template.example.html
 CLAUDE.md

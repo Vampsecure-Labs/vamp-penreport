@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vamp-penreport"
-version = "2.4"
-description = "Penetration test report generator for VampSecure Labs assessments (incl. CVSS 3.1 calculator, Jira and DefectDojo export)"
+version = "2.5"
+description = "Penetration test report generator for VampSecure Labs assessments (incl. CVSS 3.1 calculator, Jira, DefectDojo export and customizable PDF templates)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
@@ -20,7 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Security",
 ]
-dependencies = []
+dependencies = [
+    "weasyprint>=60.0",
+]
 
 
 [project.scripts]
