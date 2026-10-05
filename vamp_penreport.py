@@ -38,7 +38,7 @@ from html import escape as html_escape
 # Constantes y configuración
 # ---------------------------------------------------------------------------
 
-VERSION = "2.5"
+VERSION = "2.6"
 COPYRIGHT = "© VampSecure Studios — VampSecure Labs Security Research Division"
 DISCLAIMER = (
     "Este informe es CONFIDENCIAL y está destinado exclusivamente al cliente indicado. "
@@ -869,12 +869,111 @@ class PenReport:
                 f"</table>"
             )
 
+        ens_html = self._build_ens_checklist_html() if self.sector == "admin-publica" else ""
+
         return (
             f"<div class='regulatory-box'>"
             f"<strong>{html_escape(nombre)} — Marco Regulatorio Aplicable</strong>"
             f"<p style='margin-top:10px'>{texto}</p>"
             f"</div>"
             f"{afectados_html}"
+            f"{ens_html}"
+        )
+
+    # Controles ENS RD 311/2022 relevantes para un informe de pentest
+    _ENS_CONTROLS: List[Tuple[str, str, List[str]]] = [
+        # (control_id, descripción, [palabras clave de hallazgos que activan el control])
+        ("op.acc.1",  "Identificación — usuarios y servicios con identidad única",
+         ["usuario", "cuenta", "user", "account", "identidad"]),
+        ("op.acc.2",  "Requisitos de acceso — necesidad de conocer",
+         ["autorización", "authorization", "privilegio", "privilege", "rbac"]),
+        ("op.acc.3",  "Segregación de funciones y acceso mínimo",
+         ["admin", "administrador", "root", "superuser", "privilegio elevado",
+          "privilege escalation"]),
+        ("op.acc.4",  "Proceso de gestión de derechos de acceso",
+         ["kerberoast", "asrep", "delegación", "delegation", "spn",
+          "contraseña", "password", "credential"]),
+        ("op.acc.5",  "Mecanismo de autenticación — contraseñas y tokens",
+         ["contraseña", "password", "hash", "ntlm", "kerberos",
+          "brute", "spray", "autenticación débil", "weak auth"]),
+        ("op.acc.6",  "Acceso local y remoto — consola segura",
+         ["rdp", "ssh", "vnc", "acceso remoto", "remote access", "delegación"]),
+        ("op.exp.2",  "Configuración de seguridad de sistemas",
+         ["misconfiguration", "configuración", "default", "hardening", "cis"]),
+        ("op.exp.7",  "Gestión del cambio — control de versiones y parches",
+         ["cve", "vulnerability", "vulnerabilidad", "parche", "patch",
+          "out-of-date", "obsoleto", "desactualizado"]),
+        ("op.mon.1",  "Auditoría de la seguridad — registros de actividad",
+         ["log", "audit", "registro", "monitoring", "siem", "wazuh"]),
+        ("mp.com.1",  "Perímetro seguro — protección de la red",
+         ["firewall", "perimeter", "perímetro", "port", "puerto", "exposición",
+          "exposure", "open port"]),
+        ("mp.com.3",  "Protección de la autenticidad e integridad de canales",
+         ["tls", "ssl", "certificado", "certificate", "mitm", "intercepción",
+          "weak cipher", "cifrado débil"]),
+        ("mp.sw.1",   "Desarrollo de aplicaciones — criterios de seguridad",
+         ["sqli", "xss", "injection", "inyección", "owasp", "csrf", "ssti"]),
+        ("mp.info.3", "Cifrado de información — datos en tránsito y en reposo",
+         ["cifrado", "encryption", "plaintext", "cleartext", "secreto expuesto",
+          "secret", "api key", "token expuesto"]),
+    ]
+
+    def _build_ens_checklist_html(self) -> str:
+        """Genera una tabla checklist ENS RD 311/2022 con estado por control."""
+        finding_text = " ".join(
+            (f.title + " " + f.description + " " + " ".join(f.references)).lower()
+            for f in self._findings_by_severity()
+        )
+        criticos_texto = " ".join(
+            (f.title + " " + f.description).lower()
+            for f in self._findings_by_severity() if f.severity in ("CRITICAL", "HIGH")
+        )
+
+        filas = ""
+        for ctrl_id, descripcion, keywords in self._ENS_CONTROLS:
+            coincide_finding = any(kw.lower() in finding_text for kw in keywords)
+            coincide_critico = any(kw.lower() in criticos_texto for kw in keywords)
+            if coincide_critico:
+                estado   = "⛔ No conforme"
+                color    = "#c0392b"
+                bg       = "#2c1010"
+                prioridad = "Inmediata (≤30 días)"
+            elif coincide_finding:
+                estado   = "⚠️ Revisar"
+                color    = "#e67e22"
+                bg       = "#2c1c10"
+                prioridad = "Planificada (30–90 días)"
+            else:
+                estado   = "✅ Sin hallazgos"
+                color    = "#27ae60"
+                bg       = "#0f1f15"
+                prioridad = "—"
+            filas += (
+                f"<tr style='background:{bg}'>"
+                f"<td><code style='color:#a0cfff'>{html_escape(ctrl_id)}</code></td>"
+                f"<td style='font-size:.9em'>{html_escape(descripcion)}</td>"
+                f"<td><span style='color:{color};font-weight:600'>"
+                f"{html_escape(estado)}</span></td>"
+                f"<td style='font-size:.85em;color:#aaa'>"
+                f"{html_escape(prioridad)}</td>"
+                f"</tr>\n"
+            )
+
+        return (
+            f"<h3 style='margin-top:2rem'>Checklist ENS RD 311/2022</h3>"
+            f"<p style='font-size:.9em;color:#aaa'>Estado de los controles ENS más relevantes "
+            f"para los hallazgos del engagement. Estado determinado automáticamente "
+            f"por coincidencia con el texto de los hallazgos; revisar manualmente antes "
+            f"de incluir en la evidencia de certificación.</p>"
+            f"<table class='findings-table' style='font-size:.88em'>"
+            f"<thead><tr>"
+            f"<th style='width:100px'>Control</th>"
+            f"<th>Descripción</th>"
+            f"<th style='width:140px'>Estado</th>"
+            f"<th style='width:170px'>Prioridad</th>"
+            f"</tr></thead>"
+            f"<tbody>{filas}</tbody>"
+            f"</table>"
         )
 
     def _build_roadmap_html_sector(self) -> str:

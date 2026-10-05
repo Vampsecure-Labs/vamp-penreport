@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vamp-penreport"
-version = "2.5"
+version = "2.6"
 description = "Penetration test report generator for VampSecure Labs assessments (incl. CVSS 3.1 calculator, Jira, DefectDojo export and customizable PDF templates)"
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }

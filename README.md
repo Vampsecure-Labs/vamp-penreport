@@ -3,7 +3,7 @@
   <img src="https://github.com/Vampsecure-Labs/vamp-penreport/actions/workflows/ci.yml/badge.svg" alt="CI"/>
 # vamp-penreport
 
-![Version](https://img.shields.io/badge/version-2.4-crimson)
+![Version](https://img.shields.io/badge/version-2.6-crimson)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![VampSecure Labs](https://img.shields.io/badge/VampSecure-Labs-7c3aed)
@@ -232,5 +232,10 @@ MIT — See `LICENSE` file.
 
 ---
 
-## Versión
-v2.4 — VampSecure Labs Security Research Division
+## Historial de versiones
+
+| Versión | Cambios principales |
+|---------|---------------------|
+| v2.6 | Checklist ENS RD 311/2022 en `--sector admin-publica`: estado automático por control (op.acc.1–6, op.exp.2/7, op.mon.1, mp.com.1/3, mp.sw.1, mp.info.3) |
+| v2.5 | Sectores adicionales (genérico, sanidad); informe ejecutivo configurable |
+| v2.4 | VampSecure Labs Security Research Division — versión inicial pública |
