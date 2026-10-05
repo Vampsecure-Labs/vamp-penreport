@@ -26,7 +26,6 @@ Uso autorizado exclusivamente en entornos con permiso explícito.
 
 import argparse
 import json
-import os
 import sys
 import datetime
 from dataclasses import dataclass, field
@@ -564,7 +563,7 @@ class PenReport:
             loaded += 1
 
         # Registrar resultado de la herramienta
-        summary = data.get("summary", {})
+        data.get("summary", {})
         self.tool_results.append(ToolResult(
             tool=tool,
             version=version,
@@ -1615,8 +1614,8 @@ class PenReport:
 <div class="report-footer">
   {COPYRIGHT} · Generado el {now}
   {"" if not self.gpg_key else
-   f"<div class='gpg-note'>Este informe puede verificarse con: "
-   f"<code>gpg --verify report.html.asc report.html</code></div>"}
+   "<div class='gpg-note'>Este informe puede verificarse con: "
+   "<code>gpg --verify report.html.asc report.html</code></div>"}
 </div>
 
 </body>
@@ -2228,7 +2227,7 @@ class PenReport:
         Diseño profesional con portada, tabla resumen y hallazgos.
         """
         try:
-            from fpdf import FPDF
+            import fpdf  # noqa: F401
         except ImportError:
             cprint("  [!] fpdf2 no está instalado. Instálalo con: pip install fpdf2", Color.RED)
             cprint("      El PDF no se ha generado.", Color.YELLOW)
@@ -2447,12 +2446,12 @@ class PenReport:
 
         # Cabecera
         lines += [
-            f"# Informe de Auditoría de Seguridad",
-            f"",
+            "# Informe de Auditoría de Seguridad",
+            "",
             f"> **CONFIDENCIAL** — {COPYRIGHT}",
-            f"",
-            f"| Campo | Valor |",
-            f"|-------|-------|",
+            "",
+            "| Campo | Valor |",
+            "|-------|-------|",
             f"| **Cliente** | {meta.client} |",
             f"| **Engagement** | {meta.engagement} |",
             f"| **Auditor** | {meta.auditor} |",
@@ -2463,35 +2462,35 @@ class PenReport:
             lines.append(f"| **Período** | {meta.start_date} — {meta.end_date} |")
         lines += [
             f"| **Generado** | {now} |",
-            f"",
+            "",
         ]
 
         # Resumen ejecutivo
         lines += [
-            f"---",
-            f"",
-            f"## 1. Resumen Ejecutivo",
-            f"",
+            "---",
+            "",
+            "## 1. Resumen Ejecutivo",
+            "",
             f"**Puntuación de Riesgo Global: {score}/100 — {label}**",
-            f"",
-            f"### Hallazgos por Severidad",
-            f"",
-            f"| Severidad | Total |",
-            f"|-----------|-------|",
+            "",
+            "### Hallazgos por Severidad",
+            "",
+            "| Severidad | Total |",
+            "|-----------|-------|",
         ]
         for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
             lines.append(f"| {sev} | {counts[sev]} |")
         lines += [
             f"| **TOTAL** | **{len(self.findings)}** |",
-            f"",
+            "",
         ]
 
         # Top 5
         lines += [
-            f"### Top 5 Hallazgos más Críticos",
-            f"",
-            f"| Severidad | ID | Título | Herramienta |",
-            f"|-----------|-----|--------|-------------|",
+            "### Top 5 Hallazgos más Críticos",
+            "",
+            "| Severidad | ID | Título | Herramienta |",
+            "|-----------|-----|--------|-------------|",
         ]
         for f in self._top_findings(5):
             lines.append(f"| {f.severity} | `{f.id}` | {f.title} | {f.source_tool} |")
@@ -2499,10 +2498,10 @@ class PenReport:
 
         # Distribución por herramienta
         lines += [
-            f"### Distribución por Herramienta VSL",
-            f"",
-            f"| Herramienta | Hallazgos |",
-            f"|-------------|-----------|",
+            "### Distribución por Herramienta VSL",
+            "",
+            "| Herramienta | Hallazgos |",
+            "|-------------|-----------|",
         ]
         for tool, findings_list in self._findings_by_tool().items():
             lines.append(f"| {tool} | {len(findings_list)} |")
@@ -2510,16 +2509,16 @@ class PenReport:
 
         # Roadmap
         lines += [
-            f"---",
-            f"",
-            f"## 2. Roadmap de Remediación",
-            f"",
+            "---",
+            "",
+            "## 2. Roadmap de Remediación",
+            "",
         ]
         for phase_name, period, severities in REMEDIATION_PHASES:
             findings = self._findings_for_phase(severities)
             lines += [
                 f"### {phase_name} ({period})",
-                f"",
+                "",
             ]
             if not findings:
                 lines.append("_No hay hallazgos en esta fase._\n")
@@ -2529,40 +2528,40 @@ class PenReport:
                         f"- **[{f.severity}] `{f.id}` — {f.title}**  ",
                         f"  Herramienta: `{f.source_tool}` | Objetivo: `{f.target}`  ",
                         f"  _{f.remediation[:200]}_",
-                        f"",
+                        "",
                     ]
 
         # Hallazgos técnicos
         if not executive_only:
             lines += [
-                f"---",
-                f"",
-                f"## 3. Hallazgos Técnicos",
-                f"",
-                f"> CVSS estimado según severidad. No es una puntuación CVSS oficial.",
-                f"",
+                "---",
+                "",
+                "## 3. Hallazgos Técnicos",
+                "",
+                "> CVSS estimado según severidad. No es una puntuación CVSS oficial.",
+                "",
             ]
             for f in self._findings_by_severity():
                 lines += [
-                    f"---",
-                    f"",
+                    "---",
+                    "",
                     f"### [{f.severity}] `{f.id}` — {f.title}",
-                    f"",
-                    f"| Campo | Valor |",
-                    f"|-------|-------|",
+                    "",
+                    "| Campo | Valor |",
+                    "|-------|-------|",
                     f"| **Severidad** | {f.severity} |",
                     f"| **CVSS estimado** | {f.cvss_estimate} |",
                     f"| **Herramienta** | {f.source_tool} |",
                     f"| **Objetivo** | {f.target} |",
-                    f"",
+                    "",
                 ]
                 if f.description:
-                    lines += [f"**Descripción**", f"", f"{f.description}", f""]
+                    lines += ["**Descripción**", "", f"{f.description}", ""]
                 if f.evidence:
-                    lines += [f"**Evidencia**", f"", f"```", f"{f.evidence}", f"```", f""]
-                lines += [f"**Remediación**", f"", f"{f.remediation}", f""]
+                    lines += ["**Evidencia**", "", "```", f"{f.evidence}", "```", ""]
+                lines += ["**Remediación**", "", f"{f.remediation}", ""]
                 if f.references:
-                    lines += [f"**Referencias**", f""]
+                    lines += ["**Referencias**", ""]
                     for ref in f.references:
                         lines.append(f"- {ref}")
                     lines.append("")
@@ -2579,14 +2578,14 @@ class PenReport:
         else:
             sec_num = str(3 + _md_offset)
         lines += [
-            f"---",
-            f"",
+            "---",
+            "",
             f"## {sec_num}. Disclaimer",
-            f"",
+            "",
             f"> {DISCLAIMER}",
-            f"",
-            f"---",
-            f"",
+            "",
+            "---",
+            "",
             f"_{COPYRIGHT}_",
         ]
 
@@ -3537,7 +3536,7 @@ def cmd_cvss(argv: list) -> int:
     cprint(SEP, Color.CYAN)
 
     # Línea de referencia de severidad
-    cprint(f"\n  Escala CVSS 3.1:", Color.GREY)
+    cprint("\n  Escala CVSS 3.1:", Color.GREY)
     escala = [
         ("None",     "0.0",      Color.GREY),
         ("Low",      "0.1-3.9",  Color.BLUE),
@@ -3547,7 +3546,6 @@ def cmd_cvss(argv: list) -> int:
     ]
     linea_escala = "  "
     for etiq, rango, col in escala:
-        marcador = " ◀ " if etiq == sev else "   "
         linea_escala += f"{col}{Color.BOLD if etiq == sev else ''}{etiq} ({rango}){Color.RESET}  "
     print(linea_escala)
     cprint(f"\n{SEP2}\n", Color.CYAN)
