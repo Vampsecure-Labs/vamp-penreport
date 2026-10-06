@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vamp-penreport"
-version = "2.6"
-description = "Penetration test report generator for VampSecure Labs assessments (incl. CVSS 3.1 calculator, Jira, DefectDojo export and customizable PDF templates)"
+version = "2.7.0"
+description = "Penetration test report generator for VampSecure Labs assessments — importable library + CLI (incl. CVSS 3.1 calculator, Jira, DefectDojo export and customizable PDF templates)"
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }
 requires-python = ">=3.9"
@@ -33,4 +33,4 @@ Homepage = "https://github.com/Vampsecure-Labs/vamp-penreport"
 Repository = "https://github.com/Vampsecure-Labs/vamp-penreport"
 
 [tool.setuptools]
-py-modules = ["vamp_penreport"]
+packages = ["vamp_penreport"]

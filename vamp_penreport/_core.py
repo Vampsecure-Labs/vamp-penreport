@@ -1,339 +1,37 @@
-#!/usr/bin/env python3
 # © VampSecure Studios — VampSecure Labs Security Research Division
 # -*- coding: utf-8 -*-
 """
-VampSecure Labs — PenReport
-============================
-Generador profesional de informes de auditoría de seguridad.
-
-Agrega los resultados JSON de múltiples herramientas del toolkit VampSecure
-Labs y produce informes consolidados en formato HTML ejecutivo, PDF y
-Markdown, listos para entrega al cliente.
-
-Características:
-  · Ingesta de múltiples ficheros JSON de salida VSL
-  · Normalización y deduplicación de hallazgos
-  · Puntuación de riesgo global y por categoría
-  · Resumen ejecutivo automático con métricas
-  · Roadmap de remediación priorizado
-  · Sección de hallazgos técnicos con CVSS estimado
-  · Exportación HTML imprimible, PDF nativo y Markdown
-
-© VampSecure Studios — VampSecure Labs Security Research Division
-
-Uso autorizado exclusivamente en entornos con permiso explícito.
+_core — Lógica principal de generación de informes vamp-penreport.
+Incluye normalización, PenReport, _PenReportPDF y calculadora CVSS 3.1.
+Sin I/O de CLI (no usa argparse ni Rich); solo cprint ANSI interno.
 """
+from __future__ import annotations
 
-import argparse
-import json
-import sys
 import datetime
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any, Tuple
-from pathlib import Path
+import json
 from html import escape as html_escape
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
-# ---------------------------------------------------------------------------
-# Constantes y configuración
-# ---------------------------------------------------------------------------
-
-VERSION = "2.6"
-COPYRIGHT = "© VampSecure Studios — VampSecure Labs Security Research Division"
-DISCLAIMER = (
-    "Este informe es CONFIDENCIAL y está destinado exclusivamente al cliente indicado. "
-    "Contiene información sensible sobre vulnerabilidades de seguridad. "
-    "Su distribución o reproducción sin autorización expresa está prohibida. "
-    "VampSecure Labs no se hace responsable del uso indebido de la información contenida "
-    "en este documento."
+from ._models import (
+    VERSION,
+    COPYRIGHT,
+    DISCLAIMER,
+    Color,
+    SEV_COLOR_HTML,
+    SEV_WEIGHT,
+    REMEDIATION_PHASES,
+    SECTOR_PROFILES,
+    FORA_ATTACK_MAP,
+    ATTACK_TACTICS_ORDER,
+    Finding,
+    ReportMeta,
+    ToolResult,
+    normalize_severity,
 )
 
-# Colores ANSI para consola
-class Color:
-    RESET   = "\033[0m"
-    BOLD    = "\033[1m"
-    RED     = "\033[91m"
-    ORANGE  = "\033[33m"
-    YELLOW  = "\033[93m"
-    BLUE    = "\033[94m"
-    CYAN    = "\033[96m"
-    GREEN   = "\033[92m"
-    MAGENTA = "\033[95m"
-    GREY    = "\033[90m"
-    WHITE   = "\033[97m"
-
-# Colores HTML por severidad
-SEV_COLOR_HTML = {
-    "CRITICAL": "#dc2626",
-    "HIGH":     "#ea580c",
-    "MEDIUM":   "#d97706",
-    "LOW":      "#2563eb",
-    "INFO":     "#6b7280",
-}
-
-# Pesos para el cálculo de puntuación de riesgo
-SEV_WEIGHT = {
-    "CRITICAL": 25,
-    "HIGH":     10,
-    "MEDIUM":    5,
-    "LOW":       1,
-    "INFO":      0,
-}
-
-# CVSS estimado por severidad (valor representativo, es estimación)
-SEV_CVSS = {
-    "CRITICAL": "9.0–10.0",
-    "HIGH":     "7.0–8.9",
-    "MEDIUM":   "4.0–6.9",
-    "LOW":      "1.0–3.9",
-    "INFO":     "0.0",
-}
-
-# Fases de remediación
-REMEDIATION_PHASES = [
-    ("Fase 1 — Inmediata",       "0–7 días",    ["CRITICAL"]),
-    ("Fase 2 — Urgente",         "7–30 días",   ["HIGH"]),
-    ("Fase 3 — Planificada",     "30–90 días",  ["MEDIUM"]),
-    ("Fase 4 — Mejora continua", "+90 días",    ["LOW", "INFO"]),
-]
-
-# Perfiles de sector para ajuste de lenguaje, marco regulatorio y priorización
-SECTOR_PROFILES: Dict[str, Dict] = {
-    "finanzas": {
-        "nombre": "Sector Financiero",
-        "resumen_ejecutivo": (
-            "En el sector financiero, las vulnerabilidades identificadas deben evaluarse "
-            "bajo el prisma del cumplimiento PCI-DSS y el riesgo financiero directo. "
-            "Los hallazgos relativos a secretos expuestos, acceso no autorizado y cifrado "
-            "deficiente tienen impacto inmediato sobre la integridad de los datos de pago "
-            "y pueden derivar en sanciones regulatorias, pérdida de certificación PCI-DSS "
-            "y daño reputacional severo."
-        ),
-        "marco_regulatorio": (
-            "Marco normativo aplicable: <strong>PCI-DSS v4.0</strong> (protección de datos "
-            "de tarjetas), <strong>ISO/IEC 27001</strong> (gestión de seguridad de la "
-            "información), <strong>DORA</strong> (resiliencia digital para entidades "
-            "financieras en la UE) y <strong>RGPD</strong>. Los hallazgos CRITICAL o HIGH "
-            "que afecten a sistemas de pago, datos de tarjetas o credenciales de acceso "
-            "pueden constituir una violación directa de los requisitos PCI-DSS 6.x y 8.x. "
-            "La resolución de estos hallazgos debe priorizarse antes de la próxima evaluación "
-            "QSA o ASV."
-        ),
-        # Palabras clave en title/tags que elevan un hallazgo HIGH a prioridad inmediata
-        "prioridad_extra_critica": ["secreto", "token", "clave", "api key", "acceso",
-                                    "credencial", "auth", "contraseña", "password"],
-    },
-    "sanidad": {
-        "nombre": "Sector Sanitario",
-        "resumen_ejecutivo": (
-            "En el sector sanitario, la protección de datos de salud y la disponibilidad "
-            "de los sistemas son requisitos críticos. Los hallazgos identificados se evalúan "
-            "bajo los principios del <strong>RGPD Art. 9</strong> (datos de salud como "
-            "categoría especial) y la normativa HIPAA para entidades con actividad en "
-            "EE.UU. Cualquier exposición de información de pacientes o interrupción de "
-            "sistemas clínicos puede tener consecuencias directas sobre la seguridad de "
-            "las personas y acarrear la obligación de notificación a la AEPD en 72 horas."
-        ),
-        "marco_regulatorio": (
-            "Marco normativo aplicable: <strong>RGPD Art. 9</strong> (datos de salud como "
-            "categoría especial de datos personales), <strong>HIPAA Security Rule</strong> "
-            "(para entidades con actividad en EE.UU.), <strong>LOPD-GDD</strong> (Ley "
-            "Orgánica 3/2018 en España), <strong>ENS</strong> (Esquema Nacional de "
-            "Seguridad para entidades públicas sanitarias) y <strong>Directiva NIS2</strong> "
-            "para infraestructuras críticas. Los hallazgos que expongan datos de pacientes "
-            "(PII/PHI) requieren notificación a la <abbr title='Agencia Española de "
-            "Protección de Datos'>AEPD</abbr> en un plazo máximo de 72 horas desde su "
-            "detección."
-        ),
-        "prioridad_extra_critica": ["pii", "dato personal", "paciente", "historia clínica",
-                                    "medical", "salud", "health"],
-    },
-    "admin-publica": {
-        "nombre": "Administración Pública",
-        "resumen_ejecutivo": (
-            "En el ámbito de la administración pública, la auditoría se enmarca en los "
-            "requisitos del <strong>Esquema Nacional de Seguridad (ENS)</strong> y la "
-            "LOPD-GDD. Las vulnerabilidades críticas detectadas pueden comprometer "
-            "servicios esenciales para los ciudadanos y exponer datos de carácter personal "
-            "bajo custodia pública, con las correspondientes responsabilidades "
-            "administrativas y penales."
-        ),
-        "marco_regulatorio": (
-            "Marco normativo aplicable: <strong>Real Decreto 311/2022</strong> (Esquema "
-            "Nacional de Seguridad — ENS), <strong>Ley Orgánica 3/2018</strong> (LOPD-GDD), "
-            "<strong>RGPD</strong>, <strong>Directiva NIS2</strong> (en fase de transposición) "
-            "y las guías técnicas <strong>CCN-STIC</strong> del Centro Criptológico Nacional. "
-            "Las entidades con nivel ENS ALTO deben subsanar los hallazgos CRITICAL en un "
-            "máximo de 30 días y notificar al <strong>CCN-CERT</strong> los incidentes de "
-            "nivel 4 o superior. Los sistemas con nivel ENS MEDIO deben aplicar las medidas "
-            "del Anexo II del RD 311/2022."
-        ),
-        "prioridad_extra_critica": ["ens", "administracion", "ciudadano", "gobierno",
-                                    "lopd", "agencia"],
-    },
-    "ecommerce": {
-        "nombre": "Comercio Electrónico",
-        "resumen_ejecutivo": (
-            "En plataformas de comercio electrónico, los hallazgos se evalúan bajo los "
-            "estándares <strong>PCI-DSS</strong> (transacciones de pago), disponibilidad "
-            "del servicio y protección de datos de clientes. Las vulnerabilidades en "
-            "formularios de pago, inyecciones SQL y exposición de datos de tarjetas tienen "
-            "impacto directo en la confianza del consumidor, las tasas de conversión y "
-            "el cumplimiento regulatorio de pagos."
-        ),
-        "marco_regulatorio": (
-            "Marco normativo aplicable: <strong>PCI-DSS v4.0</strong> (obligatorio para "
-            "todo procesador de tarjetas), <strong>RGPD</strong> (datos de compradores), "
-            "<strong>Directiva PSD2</strong> (servicios de pago en línea y autenticación "
-            "reforzada SCA) y normativa de defensa del consumidor. Los hallazgos que "
-            "afecten a formularios de pago, almacenamiento de datos de tarjetas o "
-            "mecanismos de autenticación de compradores tienen carácter prioritario y "
-            "pueden acarrear la revocación del servicio de procesamiento de pagos por "
-            "parte de la entidad adquirente."
-        ),
-        "prioridad_extra_critica": ["pago", "tarjeta", "carrito", "checkout",
-                                    "sqli", "inyección", "xss"],
-    },
-    "generic": {
-        "nombre": "Sector Genérico",
-        "resumen_ejecutivo": (
-            "El presente informe recoge los hallazgos de seguridad identificados durante "
-            "la auditoría. Se recomienda abordar los hallazgos CRITICAL y HIGH de forma "
-            "inmediata (0–30 días), los MEDIUM en un plazo planificado (30–90 días) y "
-            "los LOW como parte del programa de mejora continua."
-        ),
-        "marco_regulatorio": (
-            "Marco normativo de referencia general: <strong>ISO/IEC 27001</strong> "
-            "(gestión de seguridad de la información), <strong>RGPD</strong> (si se "
-            "tratan datos personales de ciudadanos europeos), <strong>OWASP Top 10</strong> "
-            "(para aplicaciones web) y las guías del <strong>CCN-CERT</strong>. Se "
-            "recomienda revisar la aplicabilidad de normativas sectoriales específicas "
-            "según la actividad y la jurisdicción de la organización auditada."
-        ),
-        "prioridad_extra_critica": [],
-    },
-}
-
-# Mapeo FORA-NNN → (táctica MITRE ATT&CK, técnica ATT&CK)
-FORA_ATTACK_MAP: Dict[str, Tuple[str, str]] = {
-    "FORA-001": ("Credential Access",      "T1110.001 — Brute Force: Password Guessing"),
-    "FORA-002": ("Credential Access",      "T1110.003 — Brute Force: Password Spraying (HTTP)"),
-    "FORA-003": ("Credential Access",      "T1110.003 — Brute Force: Password Spraying"),
-    "FORA-004": ("Initial Access",         "T1190 — Exploit Public-Facing Application (SQLi)"),
-    "FORA-005": ("Initial Access",         "T1190 — Exploit Public-Facing Application (DB SQLi)"),
-    "FORA-006": ("Initial Access",         "T1059.007 — Command and Scripting Interpreter: XSS"),
-    "FORA-007": ("Initial Access",         "T1190 — Exploit Public-Facing Application (LFI/RFI)"),
-    "FORA-008": ("Persistence",            "T1505.003 — Server Software Component: Web Shell"),
-    "FORA-009": ("Reconnaissance",         "T1595 — Active Scanning"),
-    "FORA-010": ("Reconnaissance",         "T1595.003 — Active Scanning: Wordlist Scanning"),
-    "FORA-011": ("Exfiltration",           "T1048 — Exfiltration Over Alternative Protocol"),
-    "FORA-012": ("Collection",             "T1005 — Data from Local System (DB)"),
-    "FORA-013": ("Privilege Escalation",   "T1548 — Abuse Elevation Control Mechanism"),
-    "FORA-014": ("Privilege Escalation",   "T1136 — Create Account"),
-    "FORA-015": ("Defense Evasion",        "T1078 — Valid Accounts (off-hours access)"),
-    "FORA-016": ("Persistence",            "T1053 — Scheduled Task/Job"),
-    "FORA-017": ("Execution",              "T1059 — Command and Scripting Interpreter"),
-    "FORA-018": ("Lateral Movement",       "T1021 — Remote Services"),
-    "FORA-019": ("Discovery",              "T1083 — File and Directory Discovery"),
-    "FORA-020": ("Privilege Escalation",   "T1078.003 — Valid Accounts: Local Accounts (root)"),
-    "FORA-021": ("Defense Evasion",        "T1027 — Obfuscated Files or Information"),
-    "FORA-022": ("Credential Access",      "T1110.004 — Brute Force: Credential Stuffing"),
-    "FORA-023": ("Command & Control",      "T1071 — Application Layer Protocol (C2 beacon)"),
-    "FORA-024": ("Credential Access",      "T1110 — Brute Force: Slow Drip"),
-    "FORA-025": ("Exfiltration",           "T1048.003 — Exfiltration Over Unencrypted Protocol"),
-}
-
-# Orden canónico de tácticas ATT&CK para el informe
-ATTACK_TACTICS_ORDER = [
-    "Reconnaissance", "Initial Access", "Execution", "Persistence",
-    "Privilege Escalation", "Defense Evasion", "Credential Access",
-    "Discovery", "Lateral Movement", "Collection", "Command & Control",
-    "Exfiltration",
-]
-
-# Mapeo de alias de severidad a canónico
-SEV_ALIASES = {
-    "CRIT":     "CRITICAL",
-    "CRITICAL": "CRITICAL",
-    "HIGH":     "HIGH",
-    "MEDIUM":   "MEDIUM",
-    "MED":      "MEDIUM",
-    "MODERATE": "MEDIUM",
-    "LOW":      "LOW",
-    "INFO":     "INFO",
-    "INFORMATIONAL": "INFO",
-    "NONE":     "INFO",
-}
-
 # ---------------------------------------------------------------------------
-# Banner ASCII
-# ---------------------------------------------------------------------------
-
-BANNER = r"""
-__   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___ 
-\ \ / /_\ |  \/  | _ \/ __| __/ __| | | | _ \ __| |    /_\ | _ ) __|
- \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
-  \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
-  by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-penreport v2.5 · Penetration Testing Report Generator
-  ────────────────────────────────────────────────────────────────────────
-  USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
-"""
-
-# ---------------------------------------------------------------------------
-# Estructuras de datos
-# ---------------------------------------------------------------------------
-
-@dataclass
-class Finding:
-    """Representa un hallazgo de seguridad normalizado."""
-    id: str
-    severity: str           # CRITICAL | HIGH | MEDIUM | LOW | INFO
-    title: str
-    description: str
-    evidence: str
-    remediation: str
-    references: List[str]
-    source_tool: str        # Herramienta VSL que lo generó
-    target: str             # Objetivo del escaneo
-
-    @property
-    def cvss_estimate(self) -> str:
-        """Devuelve el rango CVSS estimado según la severidad."""
-        return SEV_CVSS.get(self.severity, "N/A")
-
-    @property
-    def color_html(self) -> str:
-        """Color HTML asociado a la severidad."""
-        return SEV_COLOR_HTML.get(self.severity, "#6b7280")
-
-
-@dataclass
-class ReportMeta:
-    """Metadatos del informe de auditoría."""
-    client: str
-    engagement: str
-    auditor: str = "VampSecure Labs"
-    scope: str = ""
-    start_date: str = ""
-    end_date: str = ""
-    logo_url: str = ""
-    logo_b64: str = ""   # data URI base64 (tiene prioridad sobre logo_url)
-    generated_at: str = field(default_factory=lambda: datetime.datetime.now().isoformat(timespec="seconds"))
-
-
-@dataclass
-class ToolResult:
-    """Resultado de una herramienta VSL cargada."""
-    tool: str
-    version: str
-    target: str
-    timestamp: str
-    findings_count: int
-    filepath: str
-
-
-# ---------------------------------------------------------------------------
-# Funciones de utilidad de consola
+# Utilidades de consola (ANSI, sin dependencias externas)
 # ---------------------------------------------------------------------------
 
 def cprint(text: str, color: str = "", bold: bool = False) -> None:
@@ -343,7 +41,7 @@ def cprint(text: str, color: str = "", bold: bool = False) -> None:
         prefix += Color.BOLD
     if color:
         prefix += color
-    suffix = Color.RESET if (prefix) else ""
+    suffix = Color.RESET if prefix else ""
     print(f"{prefix}{text}{suffix}")
 
 
@@ -360,14 +58,6 @@ def cprint_sev(severity: str, text: str) -> None:
     cprint(text, color)
 
 
-def print_banner() -> None:
-    """Muestra el banner de inicio."""
-    cprint(BANNER, Color.MAGENTA, bold=True)
-    cprint(f"  PenReport v{VERSION} — Generador de Informes de Auditoría", Color.CYAN, bold=True)
-    cprint(f"  {COPYRIGHT}", Color.GREY)
-    print()
-
-
 def verbose_log(msg: str, verbose: bool = False) -> None:
     """Imprime mensajes de depuración solo en modo verbose."""
     if verbose:
@@ -378,31 +68,21 @@ def verbose_log(msg: str, verbose: bool = False) -> None:
 # Normalización de hallazgos
 # ---------------------------------------------------------------------------
 
-def normalize_severity(raw: str) -> str:
-    """
-    Normaliza un valor de severidad a uno de los canónicos:
-    CRITICAL, HIGH, MEDIUM, LOW, INFO.
-    Si no se reconoce, devuelve INFO por defecto.
-    """
-    if not raw:
-        return "INFO"
-    upper = raw.strip().upper()
-    return SEV_ALIASES.get(upper, "INFO")
-
-
-def extract_findings_from_json(data: Dict[str, Any], filepath: str, verbose: bool = False) -> Tuple[List[Dict], str, str, str]:
+def extract_findings_from_json(
+    data: Dict[str, Any],
+    filepath: str,
+    verbose: bool = False,
+) -> Tuple[List[Dict], str, str, str]:
     """
     Extrae hallazgos brutos de un JSON VSL, intentando múltiples estructuras.
     Devuelve (lista_de_hallazgos, nombre_tool, version, target).
     """
-    tool    = data.get("tool",      Path(filepath).stem)
-    version = data.get("version",   "unknown")
-    target  = data.get("target",    "N/A")
+    tool    = data.get("tool",    Path(filepath).stem)
+    version = data.get("version", "unknown")
+    target  = data.get("target",  "N/A")
 
-    # Campo principal
     findings_raw = data.get("findings")
 
-    # Campos alternativos si no existe 'findings'
     if findings_raw is None:
         for alt in ("results", "issues", "vulnerabilities", "alerts", "checks"):
             if alt in data and isinstance(data[alt], list):
@@ -417,20 +97,22 @@ def extract_findings_from_json(data: Dict[str, Any], filepath: str, verbose: boo
     return findings_raw, tool, version, target
 
 
-def normalize_finding(raw: Dict[str, Any], source_tool: str, target: str, index: int) -> Finding:
+def normalize_finding(
+    raw: Dict[str, Any],
+    source_tool: str,
+    target: str,
+    index: int,
+) -> Finding:
     """
     Normaliza un hallazgo bruto a la estructura Finding canónica.
     Intenta múltiples nombres de campo para mayor compatibilidad.
     """
-    # ID
     fid = (
         raw.get("id") or
         raw.get("finding_id") or
         raw.get("check_id") or
         f"{source_tool.upper()[:4]}-{index:03d}"
     )
-
-    # Severidad
     sev_raw = (
         raw.get("severity") or
         raw.get("risk") or
@@ -438,8 +120,6 @@ def normalize_finding(raw: Dict[str, Any], source_tool: str, target: str, index:
         raw.get("priority") or
         "INFO"
     )
-
-    # Título
     title = (
         raw.get("title") or
         raw.get("name") or
@@ -447,8 +127,6 @@ def normalize_finding(raw: Dict[str, Any], source_tool: str, target: str, index:
         raw.get("message") or
         f"Hallazgo #{index}"
     )
-
-    # Descripción
     description = (
         raw.get("description") or
         raw.get("detail") or
@@ -456,8 +134,6 @@ def normalize_finding(raw: Dict[str, Any], source_tool: str, target: str, index:
         raw.get("info") or
         ""
     )
-
-    # Evidencia
     evidence = (
         raw.get("evidence") or
         raw.get("output") or
@@ -466,8 +142,6 @@ def normalize_finding(raw: Dict[str, Any], source_tool: str, target: str, index:
         raw.get("data") or
         ""
     )
-
-    # Remediación
     remediation = (
         raw.get("remediation") or
         raw.get("fix") or
@@ -475,8 +149,6 @@ def normalize_finding(raw: Dict[str, Any], source_tool: str, target: str, index:
         raw.get("mitigation") or
         "Consultar con el equipo de seguridad para definir plan de remediación."
     )
-
-    # Referencias
     refs = raw.get("references") or raw.get("refs") or raw.get("links") or []
     if isinstance(refs, str):
         refs = [refs]
@@ -516,9 +188,7 @@ class PenReport:
     ) -> None:
         self.meta    = meta
         self.verbose = verbose
-        # Sector para ajuste de lenguaje, marco regulatorio y priorización
         self.sector  = sector if sector in SECTOR_PROFILES else "generic"
-        # ID de clave GPG para firma del informe (vacío = sin firma)
         self.gpg_key = gpg_key.strip()
         self.findings:     List[Finding]    = []
         self.tool_results: List[ToolResult] = []
@@ -556,13 +226,14 @@ class PenReport:
         loaded = 0
         for idx, raw_finding in enumerate(findings_raw, start=1):
             if not isinstance(raw_finding, dict):
-                verbose_log(f"Hallazgo #{idx} ignorado (no es dict) en {filepath}", self.verbose)
+                verbose_log(
+                    f"Hallazgo #{idx} ignorado (no es dict) en {filepath}", self.verbose
+                )
                 continue
             finding = normalize_finding(raw_finding, tool, target, idx)
             self.findings.append(finding)
             loaded += 1
 
-        # Registrar resultado de la herramienta
         data.get("summary", {})
         self.tool_results.append(ToolResult(
             tool=tool,
@@ -573,8 +244,11 @@ class PenReport:
             filepath=filepath,
         ))
 
-        cprint(f"  [+] {path.name}: {loaded} hallazgo(s) cargados "
-               f"(tool={tool}, target={target})", Color.GREEN)
+        cprint(
+            f"  [+] {path.name}: {loaded} hallazgo(s) cargados "
+            f"(tool={tool}, target={target})",
+            Color.GREEN,
+        )
         return loaded
 
     # ------------------------------------------------------------------
@@ -677,18 +351,13 @@ class PenReport:
     # Cobertura MITRE ATT&CK (hallazgos FORA-NNN)
     # ------------------------------------------------------------------
 
-    def _fora_attack_coverage(self) -> Dict[str, List["Finding"]]:
+    def _fora_attack_coverage(self) -> Dict[str, List[Finding]]:
         """
         Agrupa los hallazgos FORA-NNN por táctica MITRE ATT&CK.
-
-        Usa el campo finding.id para buscar en FORA_ATTACK_MAP y el campo
-        mitre_tactic (si existe en el JSON fuente) como respaldo.
-        Devuelve un dict {táctica: [Finding, …]} solo con tácticas que tienen hallazgos.
         """
-        by_tactic: Dict[str, List["Finding"]] = {}
+        by_tactic: Dict[str, List[Finding]] = {}
         for f in self.findings:
             fid = f.id.strip().upper()
-            # Buscar en el mapa estático
             if fid in FORA_ATTACK_MAP:
                 tactic, _ = FORA_ATTACK_MAP[fid]
             elif fid.startswith("FORA-"):
@@ -715,8 +384,10 @@ class PenReport:
 
             badge_str = " ".join(
                 f"<span class='badge' style='background:{SEV_COLOR_HTML[s]}'>{s[:4]} ×{n}</span>"
-                for s, n in sorted(by_sev_count.items(),
-                                   key=lambda x: ["CRITICAL","HIGH","MEDIUM","LOW","INFO"].index(x[0]))
+                for s, n in sorted(
+                    by_sev_count.items(),
+                    key=lambda x: ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"].index(x[0]),
+                )
             )
             fid_parts = []
             for f in findings:
@@ -805,7 +476,10 @@ class PenReport:
         print()
         cprint("  Herramientas cargadas:", Color.GREY)
         for tr in self.tool_results:
-            cprint(f"    · {tr.tool} ({tr.findings_count} hallazgos, target: {tr.target})", Color.GREY)
+            cprint(
+                f"    · {tr.tool} ({tr.findings_count} hallazgos, target: {tr.target})",
+                Color.GREY,
+            )
         print()
 
     # ------------------------------------------------------------------
@@ -832,14 +506,11 @@ class PenReport:
     def _build_regulatory_html(self) -> str:
         """
         Devuelve el bloque HTML de la sección de marco regulatorio del sector.
-        Incluye qué hallazgos del informe afectan a cada normativa según
-        las palabras clave de prioridad del perfil activo.
         """
         profile = SECTOR_PROFILES.get(self.sector, SECTOR_PROFILES["generic"])
         nombre  = profile["nombre"]
         texto   = profile["marco_regulatorio"]
 
-        # Hallazgos que activan las palabras clave de prioridad extra
         keywords = profile.get("prioridad_extra_critica", [])
         afectados: List[Finding] = []
         if keywords:
@@ -879,9 +550,7 @@ class PenReport:
             f"{ens_html}"
         )
 
-    # Controles ENS RD 311/2022 relevantes para un informe de pentest
     _ENS_CONTROLS: List[Tuple[str, str, List[str]]] = [
-        # (control_id, descripción, [palabras clave de hallazgos que activan el control])
         ("op.acc.1",  "Identificación — usuarios y servicios con identidad única",
          ["usuario", "cuenta", "user", "account", "identidad"]),
         ("op.acc.2",  "Requisitos de acceso — necesidad de conocer",
@@ -933,19 +602,19 @@ class PenReport:
             coincide_finding = any(kw.lower() in finding_text for kw in keywords)
             coincide_critico = any(kw.lower() in criticos_texto for kw in keywords)
             if coincide_critico:
-                estado   = "⛔ No conforme"
-                color    = "#c0392b"
-                bg       = "#2c1010"
+                estado    = "⛔ No conforme"
+                color     = "#c0392b"
+                bg        = "#2c1010"
                 prioridad = "Inmediata (≤30 días)"
             elif coincide_finding:
-                estado   = "⚠️ Revisar"
-                color    = "#e67e22"
-                bg       = "#2c1c10"
+                estado    = "⚠️ Revisar"
+                color     = "#e67e22"
+                bg        = "#2c1c10"
                 prioridad = "Planificada (30–90 días)"
             else:
-                estado   = "✅ Sin hallazgos"
-                color    = "#27ae60"
-                bg       = "#0f1f15"
+                estado    = "✅ Sin hallazgos"
+                color     = "#27ae60"
+                bg        = "#0f1f15"
                 prioridad = "—"
             filas += (
                 f"<tr style='background:{bg}'>"
@@ -978,10 +647,6 @@ class PenReport:
     def _build_roadmap_html_sector(self) -> str:
         """
         Genera el HTML del roadmap de remediación ajustado al sector activo.
-
-        En sectores como 'finanzas' y 'ecommerce', los hallazgos HIGH que
-        coincidan con palabras clave de prioridad extra se promocionan
-        visualmente a la Fase 1 con una nota de urgencia.
         """
         profile  = SECTOR_PROFILES.get(self.sector, SECTOR_PROFILES["generic"])
         keywords = profile.get("prioridad_extra_critica", [])
@@ -1001,12 +666,13 @@ class PenReport:
 
             items_html = ""
             for f in findings:
-                # Determinar si este hallazgo tiene prioridad extra por sector
                 es_prioritario = (
                     keywords and
                     f.severity in ("HIGH", "MEDIUM") and
-                    any(kw.lower() in (f.title + " " + f.description).lower()
-                        for kw in keywords)
+                    any(
+                        kw.lower() in (f.title + " " + f.description).lower()
+                        for kw in keywords
+                    )
                 )
                 nota_sector = (
                     f"<span class='sector-priority-note'>"
@@ -1053,41 +719,24 @@ class PenReport:
     ) -> list:
         """
         Crea issues en Jira para cada hallazgo HIGH o CRITICAL del informe.
-
-        Parámetros
-        ----------
-        base_url    : URL base de la instancia Jira (ej: https://mycompany.atlassian.net)
-        project_key : Clave del proyecto Jira (ej: SEC)
-        jira_user   : Email del usuario Jira con permisos de escritura
-        jira_token  : Token API de Jira (generado en id.atlassian.com)
-        verbose     : Mostrar detalles de cada petición
-
-        Retorna lista de URLs de issues creados en Jira.
         """
         import urllib.request as _ureq
         import base64 as _b64
         import json as _json
 
-        # Construir cabecera de autenticación Basic para la API de Jira
         _creds = _b64.b64encode(f"{jira_user}:{jira_token}".encode()).decode()
         _headers = {
             "Authorization": f"Basic {_creds}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-
-        # Mapeo de severidades VSL a prioridades Jira
         _PRIORIDAD = {
             "CRITICAL": "Blocker",
             "HIGH":     "High",
         }
-
-        # URL del endpoint de creación de issues
         _api_url = base_url.rstrip("/") + "/rest/api/2/issue"
-
         issues_creados: list = []
 
-        # Solo hallazgos HIGH y CRITICAL
         hallazgos_export = [
             f for f in self._findings_by_severity()
             if f.severity in ("CRITICAL", "HIGH")
@@ -1104,7 +753,6 @@ class PenReport:
         )
 
         for hallazgo in hallazgos_export:
-            # Construir descripción del issue
             desc = (
                 f"*Descripción*\n{hallazgo.description}\n\n"
                 f"*CVSS Estimado*: {hallazgo.cvss_estimate}\n\n"
@@ -1114,7 +762,6 @@ class PenReport:
                 f"*Informe*: {self.meta.engagement} — {self.meta.client}\n"
                 f"*ID VSL*: {hallazgo.id}"
             )
-
             payload = {
                 "fields": {
                     "project":     {"key": project_key},
@@ -1125,9 +772,7 @@ class PenReport:
                     "labels":      ["vampsecure-labs", hallazgo.severity.lower()],
                 }
             }
-
             body = _json.dumps(payload).encode("utf-8")
-
             try:
                 req = _ureq.Request(_api_url, data=body, headers=_headers, method="POST")
                 with _ureq.urlopen(req, timeout=15) as resp:
@@ -1142,14 +787,10 @@ class PenReport:
                     if verbose:
                         cprint(f"      URL: {issue_url}", Color.GREY)
             except Exception as exc:
-                cprint(
-                    f"  [!] Error creando issue para '{hallazgo.id}': {exc}",
-                    Color.RED,
-                )
+                cprint(f"  [!] Error creando issue para '{hallazgo.id}': {exc}", Color.RED)
 
         cprint(
-            f"  [+] Exportación Jira completada: {len(issues_creados)} "
-            f"issue(s) creados.",
+            f"  [+] Exportación Jira completada: {len(issues_creados)} issue(s) creados.",
             Color.GREEN,
         )
         return issues_creados
@@ -1167,27 +808,15 @@ class PenReport:
     ) -> int:
         """
         Crea findings en DefectDojo para todos los hallazgos del informe.
-
-        Parámetros
-        ----------
-        base_url      : URL base de la instancia DefectDojo (ej: https://dojo.ejemplo.com)
-        api_token     : Token API de DefectDojo (Profile → API v2 Key)
-        engagement_id : ID del engagement en DefectDojo donde registrar los hallazgos
-        verbose       : Mostrar detalles de cada petición
-
-        Retorna el número de findings creados exitosamente.
         """
         import urllib.request as _ureq
         import json as _json
         import datetime as _dt
 
-        # Cabeceras de autenticación para la API REST v2 de DefectDojo
         _headers = {
             "Authorization": f"Token {api_token}",
             "Content-Type": "application/json",
         }
-
-        # Mapeo de severidades VSL → DefectDojo
         _SEV_MAP = {
             "CRITICAL": "Critical",
             "HIGH":     "High",
@@ -1195,8 +824,7 @@ class PenReport:
             "LOW":      "Low",
             "INFO":     "Info",
         }
-
-        _api_url = base_url.rstrip("/") + "/api/v2/findings/"
+        _api_url  = base_url.rstrip("/") + "/api/v2/findings/"
         _fecha_hoy = _dt.date.today().isoformat()
         creados = 0
 
@@ -1221,7 +849,7 @@ class PenReport:
                 "references":      "\n".join(hallazgo.references),
                 "impact":          f"Objetivo: {hallazgo.target}",
                 "steps_to_reproduce": hallazgo.evidence[:2000],
-                "test":            engagement_id,   # DefectDojo acepta engagement como test en v2
+                "test":            engagement_id,
                 "engagement":      engagement_id,
                 "found_by":        [],
                 "date":            _fecha_hoy,
@@ -1235,9 +863,7 @@ class PenReport:
                 "scanner_confidence": 1,
                 "tags":            ["vampsecure-labs", hallazgo.source_tool],
             }
-
             body = _json.dumps(payload).encode("utf-8")
-
             try:
                 req = _ureq.Request(_api_url, data=body, headers=_headers, method="POST")
                 with _ureq.urlopen(req, timeout=15) as resp:
@@ -1246,7 +872,8 @@ class PenReport:
                     creados += 1
                     if verbose:
                         cprint(
-                            f"  [+] Finding #{dojo_id} creado: {hallazgo.id} — {hallazgo.title[:50]}",
+                            f"  [+] Finding #{dojo_id} creado: "
+                            f"{hallazgo.id} — {hallazgo.title[:50]}",
                             Color.GREEN,
                         )
             except Exception as exc:
@@ -1256,8 +883,7 @@ class PenReport:
                 )
 
         cprint(
-            f"  [+] Exportación DefectDojo completada: {creados} "
-            f"finding(s) creados.",
+            f"  [+] Exportación DefectDojo completada: {creados} finding(s) creados.",
             Color.GREEN,
         )
         return creados
@@ -1281,16 +907,12 @@ class PenReport:
             fh.write(html)
         cprint(f"  [+] HTML generado: {filepath}", Color.GREEN)
 
-        # Firma GPG opcional
         if self.gpg_key:
             self._sign_gpg(filepath)
 
     def _sign_gpg(self, filepath: str) -> None:
         """
         Firma el fichero HTML con GPG generando un fichero .asc contiguo.
-
-        Ejecuta: gpg --detach-sign --armor --local-user KEY_ID fichero.html
-        Si gpg no está instalado o falla, emite un warning pero no aborta.
         """
         import shutil as _shutil
         import subprocess as _subprocess
@@ -1300,7 +922,6 @@ class PenReport:
             return
 
         asc_path = filepath + ".asc"
-        # Eliminar firma previa si existe para evitar errores de sobreescritura
         try:
             Path(asc_path).unlink(missing_ok=True)
         except Exception:
@@ -1308,15 +929,13 @@ class PenReport:
 
         try:
             result = _subprocess.run(
-                ["gpg", "--detach-sign", "--armor",
-                 "--local-user", self.gpg_key, filepath],
+                ["gpg", "--detach-sign", "--armor", "--local-user", self.gpg_key, filepath],
                 capture_output=True,
                 timeout=30,
             )
             if result.returncode == 0:
                 cprint(
-                    f"  [+] Firma GPG generada: {asc_path} "
-                    f"(clave: {self.gpg_key})",
+                    f"  [+] Firma GPG generada: {asc_path} (clave: {self.gpg_key})",
                     Color.GREEN,
                 )
             else:
@@ -1333,17 +952,12 @@ class PenReport:
         executive_only: bool,
     ) -> str:
         """Construye el HTML completo del informe."""
-
         meta = self.meta
         now  = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        # --- SVG: Gauge de puntuación de riesgo ---
         gauge_svg = self._svg_gauge(score)
+        bar_svg   = self._svg_bars_by_tool()
 
-        # --- SVG: Gráfico de barras por categoría ---
-        bar_svg = self._svg_bars_by_tool()
-
-        # --- Tabla de hallazgos por severidad ---
         severity_table_rows = ""
         for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
             cnt   = counts[sev]
@@ -1355,7 +969,6 @@ class PenReport:
                 f"</tr>\n"
             )
 
-        # --- Top 5 hallazgos ---
         top5_rows = ""
         for f in self._top_findings(5):
             color = f.color_html
@@ -1368,22 +981,14 @@ class PenReport:
                 f"</tr>\n"
             )
 
-        # --- Roadmap de remediación (con ajuste de sector si procede) ---
-        roadmap_html = self._build_roadmap_html_sector()
-
-        # --- Contenido específico del sector ---
+        roadmap_html           = self._build_roadmap_html_sector()
         sector_summary_html    = self._build_sector_summary_html()
         regulatory_html        = self._build_regulatory_html()
         has_regulatory         = bool(regulatory_html)
+        technical_html         = "" if executive_only else self._build_technical_html()
+        attack_html            = self._build_attack_html()
+        has_attack             = bool(attack_html)
 
-        # --- Hallazgos técnicos ---
-        technical_html = "" if executive_only else self._build_technical_html()
-
-        # --- Sección ATT&CK (solo si hay hallazgos FORA-NNN) ---
-        attack_html      = self._build_attack_html()
-        has_attack       = bool(attack_html)
-
-        # Numeración dinámica de secciones (considerando sección regulatoria)
         sec_exec       = 1
         sec_roadmap    = 2
         _reg_offset    = 1 if has_regulatory else 0
@@ -1394,7 +999,6 @@ class PenReport:
         sec_method     = 3 + _reg_offset + _atk_offset + (1 if not executive_only else 0)
         sec_disclaim   = sec_method + 1
 
-        # --- Índice de contenidos ---
         toc_items = [
             (f'<a href="#exec-summary">{sec_exec}. Resumen Ejecutivo</a>',     True),
             (f'<a href="#roadmap">{sec_roadmap}. Roadmap de Remediación</a>',  True),
@@ -1410,14 +1014,18 @@ class PenReport:
                 toc_html += f"<li>{item}</li>"
         toc_html += "</ul>"
 
-        # --- Logo del cliente ---
         logo_html = ""
         if meta.logo_b64:
-            logo_html = f"<img src='{html_escape(meta.logo_b64)}' alt='Logo cliente' class='client-logo'>"
+            logo_html = (
+                f"<img src='{html_escape(meta.logo_b64)}' "
+                f"alt='Logo cliente' class='client-logo'>"
+            )
         elif meta.logo_url:
-            logo_html = f"<img src='{html_escape(meta.logo_url)}' alt='Logo cliente' class='client-logo'>"
+            logo_html = (
+                f"<img src='{html_escape(meta.logo_url)}' "
+                f"alt='Logo cliente' class='client-logo'>"
+            )
 
-        # --- Fechas del engagement ---
         date_range = ""
         if meta.start_date and meta.end_date:
             date_range = f"{meta.start_date} — {meta.end_date}"
@@ -1428,7 +1036,6 @@ class PenReport:
         else:
             date_range = now[:10]
 
-        # --- CSS ---
         css = self._build_css()
 
         html = f"""<!DOCTYPE html>
@@ -1535,7 +1142,7 @@ class PenReport:
   {roadmap_html}
 </div>
 
-<!-- ===== MARCO REGULATORIO (solo si hay perfil de sector activo) ===== -->
+<!-- ===== MARCO REGULATORIO ===== -->
 {"" if not has_regulatory else f'''
 <div class="section page-break-before" id="regulatory">
   <h1 class="section-title">{sec_regulatory}. Marco Regulatorio</h1>
@@ -1749,9 +1356,7 @@ class PenReport:
       border-radius: 8px;
       padding: 20px;
     }
-    .exec-card.full-width {
-      grid-column: 1 / -1;
-    }
+    .exec-card.full-width { grid-column: 1 / -1; }
     .gauge-card { text-align: center; }
     .risk-score-label {
       font-size: 1.4em;
@@ -1984,7 +1589,7 @@ class PenReport:
       color: #b45309;
       font-weight: 600;
     }
-    /* Fases del roadmap (usadas por _build_roadmap_html_sector) */
+    /* Fases del roadmap */
     .phase {
       margin-bottom: 20px;
       border: 1px solid #e2e8f0;
@@ -2063,7 +1668,7 @@ class PenReport:
 
     def _svg_gauge(self, score: int) -> str:
         """Genera un SVG de gauge semicircular para la puntuación de riesgo."""
-        # Colores del gauge según la puntuación
+        import math
         if score <= 25:
             gauge_color = "#2563eb"
         elif score <= 50:
@@ -2073,30 +1678,31 @@ class PenReport:
         else:
             gauge_color = "#dc2626"
 
-        # Ángulo del gauge: 0-100 => 0-180 grados
         angle = (score / 100) * 180
-        import math
         rad = math.radians(angle)
         cx, cy, r = 100, 100, 70
         x_end = cx - r * math.cos(rad)
         y_end = cy - r * math.sin(rad)
         large_arc = 1 if angle > 180 else 0
 
-        return f"""<svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg" width="200" height="120">
-  <!-- Arco base -->
-  <path d="M 30,100 A 70,70 0 0,1 170,100" stroke="#e2e8f0" stroke-width="14" fill="none" stroke-linecap="round"/>
-  <!-- Arco de progreso -->
-  <path d="M 30,100 A 70,70 0 {large_arc},1 {x_end:.2f},{y_end:.2f}"
-        stroke="{gauge_color}" stroke-width="14" fill="none" stroke-linecap="round"/>
-  <!-- Valor central -->
-  <text x="100" y="95" text-anchor="middle" font-size="28" font-weight="bold"
-        fill="{gauge_color}" font-family="Arial, sans-serif">{score}</text>
-  <text x="100" y="115" text-anchor="middle" font-size="11" fill="#6b7280"
-        font-family="Arial, sans-serif">/ 100</text>
-  <!-- Etiquetas mínimo/máximo -->
-  <text x="28"  y="116" font-size="9" fill="#9ca3af" font-family="Arial, sans-serif">0</text>
-  <text x="166" y="116" font-size="9" fill="#9ca3af" font-family="Arial, sans-serif">100</text>
-</svg>"""
+        return (
+            f'<svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg" '
+            f'width="200" height="120">\n'
+            f'  <path d="M 30,100 A 70,70 0 0,1 170,100" stroke="#e2e8f0" '
+            f'stroke-width="14" fill="none" stroke-linecap="round"/>\n'
+            f'  <path d="M 30,100 A 70,70 0 {large_arc},1 {x_end:.2f},{y_end:.2f}"\n'
+            f'        stroke="{gauge_color}" stroke-width="14" fill="none" '
+            f'stroke-linecap="round"/>\n'
+            f'  <text x="100" y="95" text-anchor="middle" font-size="28" font-weight="bold"\n'
+            f'        fill="{gauge_color}" font-family="Arial, sans-serif">{score}</text>\n'
+            f'  <text x="100" y="115" text-anchor="middle" font-size="11" fill="#6b7280"\n'
+            f'        font-family="Arial, sans-serif">/ 100</text>\n'
+            f'  <text x="28"  y="116" font-size="9" fill="#9ca3af" '
+            f'font-family="Arial, sans-serif">0</text>\n'
+            f'  <text x="166" y="116" font-size="9" fill="#9ca3af" '
+            f'font-family="Arial, sans-serif">100</text>\n'
+            f'</svg>'
+        )
 
     def _svg_bars_by_tool(self) -> str:
         """Genera un gráfico de barras SVG con la distribución de hallazgos por herramienta."""
@@ -2104,36 +1710,37 @@ class PenReport:
         if not by_tool:
             return "<p class='empty-cell'>Sin datos de herramientas.</p>"
 
-        # Preparar datos
         tools = list(by_tool.keys())
         counts = [len(by_tool[t]) for t in tools]
         max_count = max(counts) if counts else 1
 
-        # Dimensiones
-        bar_h = 22
+        bar_h   = 22
         bar_gap = 8
         label_w = 180
         chart_w = 350
-        svg_w = label_w + chart_w + 60
-        svg_h = (bar_h + bar_gap) * len(tools) + 20
+        svg_w   = label_w + chart_w + 60
+        svg_h   = (bar_h + bar_gap) * len(tools) + 20
 
         rows = ""
         for i, (tool, count) in enumerate(zip(tools, counts)):
-            y = i * (bar_h + bar_gap) + 10
+            y         = i * (bar_h + bar_gap) + 10
             bar_width = int((count / max_count) * chart_w)
-            # Truncar etiqueta si es muy larga
-            label = tool[:26] + "…" if len(tool) > 27 else tool
-            rows += f"""
-  <text x="{label_w - 6}" y="{y + bar_h//2 + 5}" text-anchor="end"
-        font-size="11" fill="#374151" font-family="Arial, sans-serif">{html_escape(label)}</text>
-  <rect x="{label_w}" y="{y}" width="{bar_width}" height="{bar_h}"
-        fill="#7c3aed" rx="3" opacity="0.85"/>
-  <text x="{label_w + bar_width + 6}" y="{y + bar_h//2 + 5}"
-        font-size="11" fill="#374151" font-family="Arial, sans-serif">{count}</text>"""
+            label     = tool[:26] + "…" if len(tool) > 27 else tool
+            rows += (
+                f'\n  <text x="{label_w - 6}" y="{y + bar_h//2 + 5}" text-anchor="end"'
+                f'\n        font-size="11" fill="#374151" font-family="Arial, sans-serif">'
+                f'{html_escape(label)}</text>'
+                f'\n  <rect x="{label_w}" y="{y}" width="{bar_width}" height="{bar_h}"'
+                f'\n        fill="#7c3aed" rx="3" opacity="0.85"/>'
+                f'\n  <text x="{label_w + bar_width + 6}" y="{y + bar_h//2 + 5}"'
+                f'\n        font-size="11" fill="#374151" font-family="Arial, sans-serif">'
+                f'{count}</text>'
+            )
 
-        return f"""<svg viewBox="0 0 {svg_w} {svg_h}" xmlns="http://www.w3.org/2000/svg"
-     width="{svg_w}" height="{svg_h}" style="max-width:100%">{rows}
-</svg>"""
+        return (
+            f'<svg viewBox="0 0 {svg_w} {svg_h}" xmlns="http://www.w3.org/2000/svg"\n'
+            f'     width="{svg_w}" height="{svg_h}" style="max-width:100%">{rows}\n</svg>'
+        )
 
     def _build_roadmap_html(self) -> str:
         """Construye el HTML del roadmap de remediación por fases."""
@@ -2141,27 +1748,31 @@ class PenReport:
         html = ""
         for (phase_name, period, severities), phase_cls in zip(REMEDIATION_PHASES, phase_classes):
             findings = self._findings_for_phase(severities)
-            html += f"""<div class="phase-card {phase_cls}">
-  <div class="phase-header">
-    <span class="phase-title">{html_escape(phase_name)}</span>
-    <span class="phase-period">{html_escape(period)}</span>
-    <span class="badge" style="background:#6b7280">{len(findings)} hallazgo(s)</span>
-  </div>
-"""
+            html += (
+                f'<div class="phase-card {phase_cls}">\n'
+                f'  <div class="phase-header">\n'
+                f'    <span class="phase-title">{html_escape(phase_name)}</span>\n'
+                f'    <span class="phase-period">{html_escape(period)}</span>\n'
+                f'    <span class="badge" style="background:#6b7280">'
+                f'{len(findings)} hallazgo(s)</span>\n'
+                f'  </div>\n'
+            )
             if not findings:
                 html += "  <p class='phase-empty'>No hay hallazgos en esta fase.</p>\n"
             else:
                 for f in findings:
                     color = f.color_html
-                    html += f"""  <div class="roadmap-item">
-    <span class="badge" style="background:{color}">{f.severity}</span>
-    <div class="roadmap-item-text">
-      <strong>{html_escape(f.id)} — {html_escape(f.title)}</strong>
-      <span>Herramienta: {html_escape(f.source_tool)} · Objetivo: {html_escape(f.target)}</span>
-      <span>{html_escape(f.remediation[:200])}</span>
-    </div>
-  </div>
-"""
+                    html += (
+                        f'  <div class="roadmap-item">\n'
+                        f'    <span class="badge" style="background:{color}">{f.severity}</span>\n'
+                        f'    <div class="roadmap-item-text">\n'
+                        f'      <strong>{html_escape(f.id)} — {html_escape(f.title)}</strong>\n'
+                        f'      <span>Herramienta: {html_escape(f.source_tool)} · '
+                        f'Objetivo: {html_escape(f.target)}</span>\n'
+                        f'      <span>{html_escape(f.remediation[:200])}</span>\n'
+                        f'    </div>\n'
+                        f'  </div>\n'
+                    )
             html += "</div>\n"
         return html
 
@@ -2173,7 +1784,6 @@ class PenReport:
         html = ""
         for f in self._findings_by_severity():
             color = f.color_html
-            refs_html = ""
             if f.references:
                 refs_html = "<ul class='refs-list'>" + "".join(
                     f"<li>{html_escape(ref)}</li>" for ref in f.references
@@ -2183,42 +1793,45 @@ class PenReport:
 
             evidence_text = f.evidence.strip() if f.evidence.strip() else "(sin evidencia registrada)"
 
-            html += f"""<div class="finding-card">
-  <div class="finding-header" style="background:{color}18; border-bottom:2px solid {color}40;">
-    <span class="badge" style="background:{color}">{html_escape(f.severity)}</span>
-    <span class="finding-id">{html_escape(f.id)}</span>
-    <span class="finding-title">{html_escape(f.title)}</span>
-    <span class="cvss-badge">CVSS: {f.cvss_estimate} (est.)</span>
-    <span class="finding-source">{html_escape(f.source_tool)}</span>
-  </div>
-  <div class="finding-body">
-    <div class="finding-section">
-      <div class="finding-section-title">Descripción</div>
-      <p>{html_escape(f.description) if f.description else '<em>Sin descripción detallada.</em>'}</p>
-    </div>
-    <div class="finding-section">
-      <div class="finding-section-title">Evidencia</div>
-      <pre class="evidence">{html_escape(evidence_text)}</pre>
-    </div>
-    <div class="finding-section">
-      <div class="finding-section-title">Remediación recomendada</div>
-      <p>{html_escape(f.remediation)}</p>
-    </div>
-    <div class="finding-section">
-      <div class="finding-section-title">Referencias</div>
-      {refs_html}
-    </div>
-    <div class="finding-section" style="margin-bottom:0">
-      <div class="finding-section-title">Objetivo evaluado</div>
-      <p>{html_escape(f.target)}</p>
-    </div>
-  </div>
-</div>
-"""
+            html += (
+                f'<div class="finding-card">\n'
+                f'  <div class="finding-header" style="background:{color}18; '
+                f'border-bottom:2px solid {color}40;">\n'
+                f'    <span class="badge" style="background:{color}">'
+                f'{html_escape(f.severity)}</span>\n'
+                f'    <span class="finding-id">{html_escape(f.id)}</span>\n'
+                f'    <span class="finding-title">{html_escape(f.title)}</span>\n'
+                f'    <span class="cvss-badge">CVSS: {f.cvss_estimate} (est.)</span>\n'
+                f'    <span class="finding-source">{html_escape(f.source_tool)}</span>\n'
+                f'  </div>\n'
+                f'  <div class="finding-body">\n'
+                f'    <div class="finding-section">\n'
+                f'      <div class="finding-section-title">Descripción</div>\n'
+                f'      <p>{html_escape(f.description) if f.description else "<em>Sin descripción detallada.</em>"}</p>\n'
+                f'    </div>\n'
+                f'    <div class="finding-section">\n'
+                f'      <div class="finding-section-title">Evidencia</div>\n'
+                f'      <pre class="evidence">{html_escape(evidence_text)}</pre>\n'
+                f'    </div>\n'
+                f'    <div class="finding-section">\n'
+                f'      <div class="finding-section-title">Remediación recomendada</div>\n'
+                f'      <p>{html_escape(f.remediation)}</p>\n'
+                f'    </div>\n'
+                f'    <div class="finding-section">\n'
+                f'      <div class="finding-section-title">Referencias</div>\n'
+                f'      {refs_html}\n'
+                f'    </div>\n'
+                f'    <div class="finding-section" style="margin-bottom:0">\n'
+                f'      <div class="finding-section-title">Objetivo evaluado</div>\n'
+                f'      <p>{html_escape(f.target)}</p>\n'
+                f'    </div>\n'
+                f'  </div>\n'
+                f'</div>\n'
+            )
         return html
 
     # ------------------------------------------------------------------
-    # Generación de PDF
+    # Generación de PDF (fpdf2)
     # ------------------------------------------------------------------
 
     def to_pdf(self, filepath: str, executive_only: bool = False) -> None:
@@ -2261,12 +1874,12 @@ class PenReport:
         pdf.multi_cell(0, 8, self.meta.engagement, align="C")
 
         pdf.ln(20)
-        # Tabla de metadatos en portada
         fields = [
-            ("Cliente",    self.meta.client),
-            ("Auditor",    self.meta.auditor),
-            ("Período",    f"{self.meta.start_date} — {self.meta.end_date}" if self.meta.start_date else "N/A"),
-            ("Generado",   datetime.datetime.now().strftime("%Y-%m-%d")),
+            ("Cliente",  self.meta.client),
+            ("Auditor",  self.meta.auditor),
+            ("Período",  f"{self.meta.start_date} — {self.meta.end_date}"
+                         if self.meta.start_date else "N/A"),
+            ("Generado", datetime.datetime.now().strftime("%Y-%m-%d")),
         ]
         if self.meta.scope:
             fields.insert(3, ("Alcance", self.meta.scope))
@@ -2280,7 +1893,6 @@ class PenReport:
             pdf.set_text_color(226, 232, 240)
             pdf.multi_cell(0, 8, value)
 
-        # Clasificación
         pdf.ln(15)
         pdf.set_fill_color(220, 38, 38)
         pdf.set_text_color(255, 255, 255)
@@ -2288,7 +1900,6 @@ class PenReport:
         pdf.set_x(60)
         pdf.cell(90, 10, "  CONFIDENCIAL  ", ln=True, align="C", fill=True)
 
-        # Footer portada
         pdf.set_y(275)
         pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(100, 100, 100)
@@ -2311,13 +1922,11 @@ class PenReport:
         pdf.line(10, pdf.get_y(), 200, pdf.get_y())
         pdf.ln(5)
 
-        # Puntuación de riesgo
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(26, 26, 62)
         pdf.cell(0, 8, f"Puntuación de Riesgo Global: {score}/100 — {label}", ln=True)
         pdf.ln(3)
 
-        # Tabla de severidades
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_fill_color(45, 45, 94)
         pdf.set_text_color(255, 255, 255)
@@ -2342,7 +1951,6 @@ class PenReport:
             pdf.set_text_color(26, 26, 62)
             pdf.cell(40, 7, str(cnt), border=1, fill=True, align="C", ln=True)
 
-        # Total
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_fill_color(237, 233, 254)
         pdf.set_text_color(26, 26, 62)
@@ -2350,13 +1958,11 @@ class PenReport:
         pdf.cell(40, 7, str(len(self.findings)), border=1, fill=True, align="C", ln=True)
         pdf.ln(8)
 
-        # Top 5
         if self.findings:
             pdf.set_font("Helvetica", "B", 12)
             pdf.cell(0, 8, "Top 5 Hallazgos más Críticos", ln=True)
             pdf.ln(2)
 
-            # Cabecera tabla
             pdf.set_font("Helvetica", "B", 9)
             pdf.set_fill_color(45, 45, 94)
             pdf.set_text_color(255, 255, 255)
@@ -2391,14 +1997,12 @@ class PenReport:
             for f in self._findings_by_severity():
                 r, g, b = sev_colors.get(f.severity, (107, 114, 128))
 
-                # Cabecera del hallazgo
                 pdf.set_fill_color(r, g, b)
                 pdf.set_text_color(255, 255, 255)
                 pdf.set_font("Helvetica", "B", 10)
                 header_text = f"[{f.severity}] {f.id} — {f.title[:70]}"
                 pdf.cell(0, 9, header_text, ln=True, fill=True)
 
-                # Cuerpo
                 pdf.set_fill_color(248, 249, 250)
                 pdf.set_text_color(26, 26, 62)
                 pdf.set_font("Helvetica", "B", 9)
@@ -2426,7 +2030,6 @@ class PenReport:
                 pdf.line(10, pdf.get_y(), 200, pdf.get_y())
                 pdf.ln(3)
 
-        # --- Footer en todas las páginas ---
         pdf.output(filepath)
         cprint(f"  [+] PDF generado: {filepath}", Color.GREEN)
 
@@ -2443,8 +2046,6 @@ class PenReport:
         now    = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
         lines = []
-
-        # Cabecera
         lines += [
             "# Informe de Auditoría de Seguridad",
             "",
@@ -2460,12 +2061,8 @@ class PenReport:
             lines.append(f"| **Alcance** | {meta.scope} |")
         if meta.start_date or meta.end_date:
             lines.append(f"| **Período** | {meta.start_date} — {meta.end_date} |")
-        lines += [
-            f"| **Generado** | {now} |",
-            "",
-        ]
+        lines += [f"| **Generado** | {now} |", ""]
 
-        # Resumen ejecutivo
         lines += [
             "---",
             "",
@@ -2480,12 +2077,8 @@ class PenReport:
         ]
         for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
             lines.append(f"| {sev} | {counts[sev]} |")
-        lines += [
-            f"| **TOTAL** | **{len(self.findings)}** |",
-            "",
-        ]
+        lines += [f"| **TOTAL** | **{len(self.findings)}** |", ""]
 
-        # Top 5
         lines += [
             "### Top 5 Hallazgos más Críticos",
             "",
@@ -2496,7 +2089,6 @@ class PenReport:
             lines.append(f"| {f.severity} | `{f.id}` | {f.title} | {f.source_tool} |")
         lines.append("")
 
-        # Distribución por herramienta
         lines += [
             "### Distribución por Herramienta VSL",
             "",
@@ -2507,19 +2099,10 @@ class PenReport:
             lines.append(f"| {tool} | {len(findings_list)} |")
         lines.append("")
 
-        # Roadmap
-        lines += [
-            "---",
-            "",
-            "## 2. Roadmap de Remediación",
-            "",
-        ]
+        lines += ["---", "", "## 2. Roadmap de Remediación", ""]
         for phase_name, period, severities in REMEDIATION_PHASES:
             findings = self._findings_for_phase(severities)
-            lines += [
-                f"### {phase_name} ({period})",
-                "",
-            ]
+            lines += [f"### {phase_name} ({period})", ""]
             if not findings:
                 lines.append("_No hay hallazgos en esta fase._\n")
             else:
@@ -2531,7 +2114,6 @@ class PenReport:
                         "",
                     ]
 
-        # Hallazgos técnicos
         if not executive_only:
             lines += [
                 "---",
@@ -2566,12 +2148,10 @@ class PenReport:
                         lines.append(f"- {ref}")
                     lines.append("")
 
-        # Cobertura ATT&CK (si hay hallazgos FORA)
         attack_md = self._build_attack_md()
         if attack_md:
             lines += ["---", ""] + attack_md
 
-        # Numeración de la sección Disclaimer según contexto
         _md_offset = 1 if attack_md else 0
         if not executive_only:
             sec_num = str(4 + _md_offset)
@@ -2616,7 +2196,7 @@ class PenReport:
                 "label": self.risk_label(),
             },
             "summary": {
-                "total":    len(self.findings),
+                "total": len(self.findings),
                 **counts,
             },
             "tools": [
@@ -2632,15 +2212,15 @@ class PenReport:
             ],
             "findings": [
                 {
-                    "id":          f.id,
-                    "severity":    f.severity,
-                    "title":       f.title,
-                    "description": f.description,
-                    "evidence":    f.evidence,
-                    "remediation": f.remediation,
-                    "references":  f.references,
-                    "source_tool": f.source_tool,
-                    "target":      f.target,
+                    "id":            f.id,
+                    "severity":      f.severity,
+                    "title":         f.title,
+                    "description":   f.description,
+                    "evidence":      f.evidence,
+                    "remediation":   f.remediation,
+                    "references":    f.references,
+                    "source_tool":   f.source_tool,
+                    "target":        f.target,
                     "cvss_estimate": f.cvss_estimate,
                 }
                 for f in self._findings_by_severity()
@@ -2679,8 +2259,10 @@ class _PenReportPDF:
                 inner_self.set_text_color(150, 150, 150)
                 inner_self.cell(
                     0, 5,
-                    f"CONFIDENCIAL — {inner_self._meta.client} — {inner_self._meta.engagement}",
-                    ln=True, align="R"
+                    f"CONFIDENCIAL — {inner_self._meta.client} — "
+                    f"{inner_self._meta.engagement}",
+                    ln=True,
+                    align="R",
                 )
                 inner_self.ln(2)
 
@@ -2698,539 +2280,33 @@ class _PenReportPDF:
         return getattr(self._pdf, name)
 
 
-# ---------------------------------------------------------------------------
-# Punto de entrada CLI
-# ---------------------------------------------------------------------------
-
-def _get_default_pdf_template() -> str:
-    """
-    Devuelve la plantilla HTML corporativa por defecto para la exportación PDF.
-
-    La plantilla usa variables de sustitución con doble llave:
-      {{cliente}}         — Nombre del cliente
-      {{fecha}}           — Fecha del informe (YYYY-MM-DD)
-      {{hallazgos_table}} — Tabla HTML con los hallazgos (filas <tr>)
-      {{num_critical}}    — Número de hallazgos CRITICAL
-      {{num_high}}        — Número de hallazgos HIGH
-      {{num_total}}       — Número total de hallazgos
-
-    Retorna la plantilla como cadena HTML lista para sustitución.
-    """
-    return """\
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>Informe de Auditoría — {{cliente}}</title>
-  <style>
-    /* Plantilla corporativa VampSecure Labs — vamp-penreport v2.5 */
-    @page {
-      margin: 2cm 1.5cm;
-      @bottom-center {
-        content: "© VampSecure Studios — VampSecure Labs Security Research Division · Página " counter(page);
-        font-size: 8pt;
-        color: #666;
-      }
-    }
-    body {
-      font-family: "DejaVu Sans", Arial, sans-serif;
-      font-size: 10pt;
-      color: #1a1a2e;
-      background: #ffffff;
-      margin: 0;
-      padding: 0;
-    }
-    .portada {
-      text-align: center;
-      padding: 4cm 2cm 3cm;
-      border-bottom: 3px solid #c00;
-      margin-bottom: 2cm;
-    }
-    .portada h1 {
-      font-size: 22pt;
-      color: #c00;
-      margin: 0 0 0.5cm;
-    }
-    .portada .subtitulo {
-      font-size: 13pt;
-      color: #333;
-      margin: 0 0 1cm;
-    }
-    .portada .meta {
-      font-size: 10pt;
-      color: #555;
-      line-height: 1.8;
-    }
-    .seccion { margin: 1cm 0 0.5cm; }
-    .seccion h2 {
-      font-size: 14pt;
-      color: #c00;
-      border-bottom: 1px solid #c00;
-      padding-bottom: 2pt;
-      margin-bottom: 0.4cm;
-    }
-    .resumen-grid {
-      display: flex;
-      gap: 1cm;
-      margin: 0.5cm 0 1cm;
-    }
-    .resumen-caja {
-      flex: 1;
-      text-align: center;
-      padding: 0.4cm;
-      border-radius: 4pt;
-      border: 1px solid #ddd;
-    }
-    .resumen-caja.critical { border-color: #c00; background: #fff5f5; }
-    .resumen-caja.high     { border-color: #e65; background: #fff8f5; }
-    .resumen-caja.total    { border-color: #336; background: #f5f5ff; }
-    .resumen-caja .num {
-      font-size: 24pt;
-      font-weight: bold;
-      display: block;
-    }
-    .resumen-caja .etiqueta { font-size: 9pt; color: #555; }
-    table.hallazgos {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 9pt;
-      margin-top: 0.3cm;
-    }
-    table.hallazgos th {
-      background: #1a1a2e;
-      color: #fff;
-      padding: 5pt 8pt;
-      text-align: left;
-    }
-    table.hallazgos td {
-      padding: 5pt 8pt;
-      border-bottom: 1px solid #e0e0e0;
-      vertical-align: top;
-    }
-    table.hallazgos tr:nth-child(even) td { background: #f9f9f9; }
-    .sev-CRITICAL { color: #c00; font-weight: bold; }
-    .sev-HIGH     { color: #e65; font-weight: bold; }
-    .sev-MEDIUM   { color: #c80; font-weight: bold; }
-    .sev-LOW      { color: #070; }
-    .sev-INFO     { color: #007; }
-    .disclaimer {
-      margin-top: 1cm;
-      font-size: 8pt;
-      color: #888;
-      border-top: 1px solid #ddd;
-      padding-top: 0.3cm;
-    }
-  </style>
-</head>
-<body>
-  <div class="portada">
-    <h1>INFORME DE AUDITORÍA DE SEGURIDAD</h1>
-    <div class="subtitulo">Confidencial — Solo para el cliente indicado</div>
-    <div class="meta">
-      <strong>Cliente:</strong> {{cliente}}<br>
-      <strong>Fecha:</strong> {{fecha}}<br>
-      <strong>Elaborado por:</strong> VampSecure Labs Security Research Division
-    </div>
-  </div>
-
-  <div class="seccion">
-    <h2>Resumen Ejecutivo</h2>
-    <div class="resumen-grid">
-      <div class="resumen-caja critical">
-        <span class="num">{{num_critical}}</span>
-        <span class="etiqueta">CRÍTICO</span>
-      </div>
-      <div class="resumen-caja high">
-        <span class="num">{{num_high}}</span>
-        <span class="etiqueta">ALTO</span>
-      </div>
-      <div class="resumen-caja total">
-        <span class="num">{{num_total}}</span>
-        <span class="etiqueta">TOTAL</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="seccion">
-    <h2>Hallazgos de Seguridad</h2>
-    <table class="hallazgos">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Severidad</th>
-          <th>Título</th>
-          <th>Descripción</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{hallazgos_table}}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="disclaimer">
-    © VampSecure Studios — VampSecure Labs Security Research Division.
-    Este informe es CONFIDENCIAL y está destinado exclusivamente al cliente indicado.
-    Su distribución o reproducción sin autorización expresa está prohibida.
-  </div>
-</body>
-</html>
-"""
-
-
-def export_to_pdf(
-    report_data: Dict,
-    template_file: Optional[str],
-    output_path: str,
-) -> None:
-    """
-    Exporta el informe a PDF usando una plantilla HTML personalizable.
-
-    Parámetros
-    ----------
-    report_data   : Diccionario con los datos del informe. Claves esperadas:
-                      - "client"   (str)  — nombre del cliente
-                      - "date"     (str)  — fecha del informe (YYYY-MM-DD)
-                      - "findings" (list) — lista de dicts con campos:
-                          severity, id, title, description
-    template_file : Ruta a un fichero HTML de plantilla personalizado, o None
-                    para usar la plantilla corporativa por defecto de VSL.
-    output_path   : Ruta del fichero PDF de salida.
-
-    Variables de plantilla soportadas:
-      {{cliente}}         — Nombre del cliente
-      {{fecha}}           — Fecha del informe
-      {{hallazgos_table}} — Tabla HTML con los hallazgos
-      {{num_critical}}    — Número de hallazgos CRITICAL
-      {{num_high}}        — Número de hallazgos HIGH
-      {{num_total}}       — Número total de hallazgos
-
-    Lanza
-    -----
-    RuntimeError si weasyprint no está instalado o la generación falla.
-    """
-    # Cargar plantilla
-    if template_file:
-        try:
-            with open(template_file, "r", encoding="utf-8") as fh:
-                plantilla = fh.read()
-        except (OSError, IOError) as exc:
-            raise RuntimeError(f"No se pudo leer la plantilla '{template_file}': {exc}") from exc
-    else:
-        plantilla = _get_default_pdf_template()
-
-    findings = report_data.get("findings", [])
-
-    # Construir filas de la tabla de hallazgos
-    filas_html = []
-    for h in findings:
-        sev      = str(h.get("severity", "INFO"))
-        hid      = html_escape(str(h.get("id", "")))
-        titulo   = html_escape(str(h.get("title", "")))
-        desc     = html_escape(str(h.get("description", ""))[:400])
-        filas_html.append(
-            f'<tr><td>{hid}</td>'
-            f'<td class="sev-{sev}">{sev}</td>'
-            f'<td>{titulo}</td>'
-            f'<td>{desc}</td></tr>'
-        )
-    hallazgos_table = "\n        ".join(filas_html) if filas_html else (
-        '<tr><td colspan="4">Sin hallazgos</td></tr>'
-    )
-
-    # Calcular contadores
-    num_critical = sum(1 for h in findings if h.get("severity") == "CRITICAL")
-    num_high     = sum(1 for h in findings if h.get("severity") == "HIGH")
-    num_total    = len(findings)
-
-    # Sustituir variables en la plantilla
-    html_content = (
-        plantilla
-        .replace("{{cliente}}",         html_escape(str(report_data.get("client", ""))))
-        .replace("{{fecha}}",           html_escape(str(report_data.get("date", ""))))
-        .replace("{{hallazgos_table}}", hallazgos_table)
-        .replace("{{num_critical}}",    str(num_critical))
-        .replace("{{num_high}}",        str(num_high))
-        .replace("{{num_total}}",       str(num_total))
-    )
-
-    # Generar PDF con weasyprint
-    try:
-        from weasyprint import HTML as WeasyHTML  # importación tardía — dependencia opcional
-    except ImportError as exc:
-        raise RuntimeError(
-            "weasyprint no está instalado. Instálalo con: pip install 'weasyprint>=60.0'"
-        ) from exc
-
-    try:
-        WeasyHTML(string=html_content).write_pdf(output_path)
-    except Exception as exc:
-        raise RuntimeError(f"Error generando PDF con weasyprint: {exc}") from exc
-
-
-def build_parser() -> argparse.ArgumentParser:
-    """Construye y devuelve el parser de argumentos CLI."""
-    parser = argparse.ArgumentParser(
-        prog="vamp-penreport",
-        description=(
-            "VampSecure Labs PenReport — Generador profesional de informes de auditoría.\n"
-            "Agrega hallazgos JSON de múltiples herramientas VSL y genera informes\n"
-            "HTML, PDF y Markdown para entrega al cliente."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"{COPYRIGHT}\nUso autorizado exclusivamente en entornos con permiso explícito.",
-    )
-
-    # Entradas
-    parser.add_argument(
-        "INPUT",
-        nargs="+",
-        metavar="INPUT",
-        help="Uno o más ficheros JSON de salida VSL",
-    )
-
-    # Metadatos del informe
-    parser.add_argument(
-        "--client",
-        required=True,
-        metavar="NOMBRE",
-        help="Nombre del cliente (obligatorio)",
-    )
-    parser.add_argument(
-        "--engagement",
-        default="Auditoría de seguridad",
-        metavar="DESC",
-        help='Descripción del engagement (ej: "Pentest externo Q3 2026")',
-    )
-    parser.add_argument(
-        "--auditor",
-        default="VampSecure Labs",
-        metavar="NOMBRE",
-        help="Nombre/equipo auditor (default: VampSecure Labs)",
-    )
-    parser.add_argument(
-        "--scope",
-        default="",
-        metavar="TEXTO",
-        help="Alcance del engagement",
-    )
-    parser.add_argument(
-        "--start-date",
-        default="",
-        metavar="FECHA",
-        dest="start_date",
-        help="Fecha inicio (YYYY-MM-DD)",
-    )
-    parser.add_argument(
-        "--end-date",
-        default="",
-        metavar="FECHA",
-        dest="end_date",
-        help="Fecha fin (YYYY-MM-DD)",
-    )
-
-    # Salidas
-    parser.add_argument(
-        "--report-html",
-        default="report.html",
-        metavar="FILE",
-        dest="report_html",
-        help="Genera informe HTML en FILE (default: report.html)",
-    )
-    parser.add_argument(
-        "--report-pdf",
-        default=None,
-        metavar="FILE",
-        dest="report_pdf",
-        help="Genera PDF en FILE (requiere fpdf2)",
-    )
-    parser.add_argument(
-        "--report-md",
-        default=None,
-        metavar="FILE",
-        dest="report_md",
-        help="Genera Markdown en FILE",
-    )
-    parser.add_argument(
-        "--report-json",
-        default=None,
-        metavar="FILE",
-        dest="report_json",
-        help="Guarda JSON consolidado en FILE",
-    )
-    parser.add_argument(
-        "--logo-url",
-        default="",
-        metavar="URL",
-        dest="logo_url",
-        help="URL del logo del cliente (opcional, para HTML)",
-    )
-    parser.add_argument(
-        "--logo-file",
-        default="",
-        metavar="FICHERO",
-        dest="logo_file",
-        help="Ruta local al logo del cliente; se embebe como base64 en el HTML (PNG/JPG/SVG)",
-    )
-
-    # Opciones de comportamiento
-    parser.add_argument(
-        "--executive-only",
-        action="store_true",
-        dest="executive_only",
-        help="Genera solo el resumen ejecutivo (sin hallazgos técnicos detallados)",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Modo detallado",
-    )
-
-    # Sector template
-    sectores = list(SECTOR_PROFILES.keys())
-    parser.add_argument(
-        "--sector",
-        default="generic",
-        choices=sectores,
-        metavar="SECTOR",
-        help=(
-            f"Sector del cliente para ajustar el lenguaje ejecutivo, el marco "
-            f"regulatorio y la priorización del roadmap. "
-            f"Valores: {', '.join(sectores)} (default: generic)"
-        ),
-    )
-
-    # Exportación a Jira
-    jira_grp = parser.add_argument_group("Exportación Jira (hallazgos HIGH/CRITICAL)")
-    jira_grp.add_argument(
-        "--export-jira",
-        default="",
-        metavar="URL",
-        dest="export_jira",
-        help="URL base de la instancia Jira (ej: https://mycompany.atlassian.net). "
-             "Activa la exportación automática de hallazgos HIGH/CRITICAL.",
-    )
-    jira_grp.add_argument(
-        "--jira-project",
-        default="SEC",
-        metavar="KEY",
-        dest="jira_project",
-        help="Clave del proyecto Jira donde crear los issues (default: SEC)",
-    )
-    jira_grp.add_argument(
-        "--jira-user",
-        default="",
-        metavar="EMAIL",
-        dest="jira_user",
-        help="Email del usuario Jira con permisos de creación de issues",
-    )
-    jira_grp.add_argument(
-        "--jira-token",
-        default="",
-        metavar="TOKEN",
-        dest="jira_token",
-        help="Token API de Jira (generado en id.atlassian.com → API tokens)",
-    )
-
-    # Exportación a DefectDojo
-    dojo_grp = parser.add_argument_group("Exportación DefectDojo")
-    dojo_grp.add_argument(
-        "--export-dojo",
-        default="",
-        metavar="URL",
-        dest="export_dojo",
-        help="URL base de la instancia DefectDojo (ej: https://dojo.ejemplo.com). "
-             "Activa la exportación de todos los hallazgos.",
-    )
-    dojo_grp.add_argument(
-        "--dojo-token",
-        default="",
-        metavar="TOKEN",
-        dest="dojo_token",
-        help="Token API de DefectDojo (Profile → API v2 Key)",
-    )
-    dojo_grp.add_argument(
-        "--dojo-engagement",
-        default=0,
-        type=int,
-        metavar="ID",
-        dest="dojo_engagement",
-        help="ID del engagement en DefectDojo donde registrar los hallazgos",
-    )
-
-    # PDF personalizable (weasyprint, v2.5)
-    parser.add_argument(
-        "--pdf",
-        default=None,
-        metavar="FICHERO.pdf",
-        dest="pdf",
-        help=(
-            "Genera un PDF a partir de una plantilla HTML personalizable "
-            "(requiere weasyprint>=60.0). Distinto de --report-pdf: usa "
-            "plantillas con variables {{cliente}}, {{fecha}}, {{hallazgos_table}}, "
-            "{{num_critical}}, {{num_high}}, {{num_total}}."
-        ),
-    )
-    parser.add_argument(
-        "--pdf-template",
-        default=None,
-        metavar="PLANTILLA.html",
-        dest="pdf_template",
-        help=(
-            "Plantilla HTML a usar con --pdf. Si se omite se aplica la "
-            "plantilla corporativa VSL por defecto. "
-            "Consulta template.example.html para la documentación de variables."
-        ),
-    )
-
-    # Firma GPG
-    parser.add_argument(
-        "--gpg-key",
-        default="",
-        metavar="KEY_ID",
-        dest="gpg_key",
-        help=(
-            "ID de clave GPG para firmar el informe HTML. "
-            "Genera report.html.asc contiguo al informe. "
-            "Si gpg no está instalado emite warning y continúa. "
-            "(Opcional; sin este flag no se firma)"
-        ),
-    )
-
-    return parser
-
-
 # =============================================================================
 # CALCULADORA CVSS 3.1
 # =============================================================================
 
-# Valores numéricos de las métricas base CVSS 3.1
-# Fuente: CVSS v3.1 Specification Document (FIRST.org)
-_CVSS31_AV = {
+_CVSS31_AV: Dict[str, float] = {
     "N": 0.85,   # Network
     "A": 0.62,   # Adjacent
     "L": 0.55,   # Local
     "P": 0.20,   # Physical
 }
 
-_CVSS31_AC = {
+_CVSS31_AC: Dict[str, float] = {
     "L": 0.77,   # Low
     "H": 0.44,   # High
 }
 
-# PR depende del Scope: U=Unchanged, C=Changed
-_CVSS31_PR = {
+_CVSS31_PR: Dict[str, Dict[str, float]] = {
     "U": {"N": 0.85, "L": 0.62, "H": 0.27},
     "C": {"N": 0.85, "L": 0.68, "H": 0.50},
 }
 
-_CVSS31_UI = {
+_CVSS31_UI: Dict[str, float] = {
     "N": 0.85,   # None
     "R": 0.62,   # Required
 }
 
-# Impacto: None, Low, High — idéntico para C, I y A
-_CVSS31_CIA = {
+_CVSS31_CIA: Dict[str, float] = {
     "N": 0.00,
     "L": 0.22,
     "H": 0.56,
@@ -3238,10 +2314,7 @@ _CVSS31_CIA = {
 
 
 def _roundup(x: float) -> float:
-    """
-    Función roundup de CVSS 3.1: redondea al primer decimal superior.
-    Equivalente a ceil(x * 10) / 10.
-    """
+    """Función roundup de CVSS 3.1: redondea al primer decimal superior."""
     import math
     return math.ceil(round(x * 10, 10)) / 10
 
@@ -3289,11 +2362,7 @@ def calc_cvss31_base_score(
     c  : C  (Confidentiality)      — N|L|H
     i  : I  (Integrity)            — N|L|H
     a  : A  (Availability)         — N|L|H
-
-    Retorna el score redondeado según _roundup.
-    Lanza ValueError si algún valor de métrica es inválido.
     """
-    # Validar y obtener valores numéricos
     errores = []
     if av.upper() not in _CVSS31_AV:
         errores.append(f"AV inválido: {av!r} (N|A|L|P)")
@@ -3315,31 +2384,26 @@ def calc_cvss31_base_score(
     if errores:
         raise ValueError("Error en las métricas CVSS 3.1:\n  " + "\n  ".join(errores))
 
-    av_v  = _CVSS31_AV[av.upper()]
-    ac_v  = _CVSS31_AC[ac.upper()]
-    pr_v  = _CVSS31_PR[scope][pr.upper()]
-    ui_v  = _CVSS31_UI[ui.upper()]
-    c_v   = _CVSS31_CIA[c.upper()]
-    i_v   = _CVSS31_CIA[i.upper()]
-    a_v   = _CVSS31_CIA[a.upper()]
+    av_v = _CVSS31_AV[av.upper()]
+    ac_v = _CVSS31_AC[ac.upper()]
+    pr_v = _CVSS31_PR[scope][pr.upper()]
+    ui_v = _CVSS31_UI[ui.upper()]
+    c_v  = _CVSS31_CIA[c.upper()]
+    i_v  = _CVSS31_CIA[i.upper()]
+    a_v  = _CVSS31_CIA[a.upper()]
 
-    # ISCBase = 1 - [(1-C) * (1-I) * (1-A)]
     isc_base = 1.0 - (1.0 - c_v) * (1.0 - i_v) * (1.0 - a_v)
 
-    # ISC depende del Scope
     if scope == "U":
         isc = 6.42 * isc_base
     else:
         isc = 7.52 * (isc_base - 0.029) - 3.25 * (isc_base - 0.02) ** 15.0
 
-    # Si ISC <= 0, el score base es 0
     if isc <= 0:
         return 0.0
 
-    # ESC = 8.22 * AV * AC * PR * UI
     esc = 8.22 * av_v * ac_v * pr_v * ui_v
 
-    # Score base
     if scope == "U":
         raw = min(isc + esc, 10.0)
     else:
@@ -3352,17 +2416,14 @@ def _parse_vector_cvss31(vector: str) -> dict:
     """
     Parsea un vector CVSS 3.1 en formato abreviado.
     Acepta con o sin prefijo 'CVSS:3.1/'.
-    Ejemplo: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H'
-    Retorna diccionario {av, ac, pr, ui, s, c, i, a}.
     """
-    # Eliminar prefijo opcional
     v = vector.strip()
     if v.upper().startswith("CVSS:3.1/"):
         v = v[len("CVSS:3.1/"):]
     elif v.upper().startswith("CVSS:3.0/"):
         v = v[len("CVSS:3.0/"):]
 
-    partes = {}
+    partes: Dict[str, str] = {}
     for parte in v.split("/"):
         if ":" not in parte:
             continue
@@ -3387,331 +2448,3 @@ def _parse_vector_cvss31(vector: str) -> dict:
         "i":  partes["I"],
         "a":  partes["A"],
     }
-
-
-def cmd_cvss(argv: list) -> int:
-    """
-    Subcomando 'cvss': calcula el CVSS 3.1 Base Score y muestra resultado detallado.
-
-    Uso:
-        vamp-penreport cvss --av N --ac L --pr N --ui N --s U --c H --i H --a H
-        vamp-penreport cvss --vector AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H
-    """
-    p = argparse.ArgumentParser(
-        prog="vamp-penreport cvss",
-        description="Calculadora CVSS 3.1 Base Score — VampSecure Labs",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Ejemplos:\n"
-            "  vamp-penreport cvss --av N --ac L --pr N --ui N --s U --c H --i H --a H\n"
-            "  vamp-penreport cvss --vector AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H\n"
-            "\n"
-            "Valores de métrica:\n"
-            "  AV: N (Network) | A (Adjacent) | L (Local) | P (Physical)\n"
-            "  AC: L (Low) | H (High)\n"
-            "  PR: N (None) | L (Low) | H (High)\n"
-            "  UI: N (None) | R (Required)\n"
-            "  S:  U (Unchanged) | C (Changed)\n"
-            "  C/I/A: N (None) | L (Low) | H (High)\n"
-        ),
-    )
-    p.add_argument("--vector",
-                   metavar="CVSS_VECTOR",
-                   help="Vector CVSS 3.1 completo, ej: AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
-    p.add_argument("--av", metavar="METRIC",
-                   help="Attack Vector: N|A|L|P")
-    p.add_argument("--ac", metavar="METRIC",
-                   help="Attack Complexity: L|H")
-    p.add_argument("--pr", metavar="METRIC",
-                   help="Privileges Required: N|L|H")
-    p.add_argument("--ui", metavar="METRIC",
-                   help="User Interaction: N|R")
-    p.add_argument("--s",  metavar="METRIC",
-                   help="Scope: U|C")
-    p.add_argument("--c",  metavar="METRIC",
-                   help="Confidentiality: N|L|H")
-    p.add_argument("--i",  metavar="METRIC",
-                   help="Integrity: N|L|H")
-    p.add_argument("--a",  metavar="METRIC",
-                   help="Availability: N|L|H")
-
-    args = p.parse_args(argv)
-
-    # Obtener parámetros desde --vector o individualmente
-    if args.vector:
-        try:
-            metricas = _parse_vector_cvss31(args.vector)
-        except ValueError as exc:
-            cprint(f"\n  [!] {exc}", Color.RED)
-            return 1
-    else:
-        # Verificar que se han proporcionado todas las métricas individuales
-        campos = ("av", "ac", "pr", "ui", "s", "c", "i", "a")
-        faltantes = [f"--{f}" for f in campos if getattr(args, f) is None]
-        if faltantes:
-            cprint(
-                f"\n  [!] Debes proporcionar --vector o todas las métricas individuales.\n"
-                f"      Faltan: {', '.join(faltantes)}",
-                Color.RED,
-            )
-            p.print_help()
-            return 1
-        metricas = {f: getattr(args, f) for f in campos}
-
-    # Calcular score
-    try:
-        score = calc_cvss31_base_score(**metricas)
-    except ValueError as exc:
-        cprint(f"\n  [!] {exc}", Color.RED)
-        return 1
-
-    sev = _severidad_cvss(score)
-    col_sev = _color_severidad(sev)
-
-    # -------------------------------------------------------------------------
-    # Construir vector CVSS para mostrar
-    # -------------------------------------------------------------------------
-    av, ac, pr, ui, s_, c_, i_, a_ = (
-        metricas["av"].upper(), metricas["ac"].upper(), metricas["pr"].upper(),
-        metricas["ui"].upper(), metricas["s"].upper(), metricas["c"].upper(),
-        metricas["i"].upper(), metricas["a"].upper(),
-    )
-    vector_str = f"AV:{av}/AC:{ac}/PR:{pr}/UI:{ui}/S:{s_}/C:{c_}/I:{i_}/A:{a_}"
-
-    # Nombres completos de las métricas para la tabla
-    _AV_NOMBRES = {"N": "Network", "A": "Adjacent", "L": "Local", "P": "Physical"}
-    _AC_NOMBRES = {"L": "Low", "H": "High"}
-    _PR_NOMBRES = {"N": "None", "L": "Low", "H": "High"}
-    _UI_NOMBRES = {"N": "None", "R": "Required"}
-    _S_NOMBRES  = {"U": "Unchanged", "C": "Changed"}
-    _CIA_NOMBRES = {"N": "None", "L": "Low", "H": "High"}
-
-    # -------------------------------------------------------------------------
-    # Salida formateada con ANSI (no requiere Rich)
-    # -------------------------------------------------------------------------
-    SEP  = "  " + "─" * 62
-    SEP2 = "  " + "═" * 62
-
-    cprint(f"\n{SEP2}", Color.CYAN)
-    cprint(f"  {'CVSS 3.1 Base Score':^62}", Color.CYAN, bold=True)
-    cprint(f"{SEP2}", Color.CYAN)
-
-    # Score prominente
-    score_label = f"{score:.1f}"
-    cprint(
-        f"\n  {'Score:':<20}",
-        Color.WHITE,
-        bold=True,
-    )
-    # Imprimir score en color de severidad, grande
-    print(f"  {Color.BOLD}{col_sev}{score_label:>8}  /  10.0{Color.RESET}")
-    cprint(
-        f"  {'Severidad:':<20}{sev}",
-        col_sev,
-        bold=True,
-    )
-    cprint(
-        f"  {'Vector:':<20}{vector_str}",
-        Color.GREY,
-    )
-
-    # Tabla de métricas
-    cprint(f"\n{SEP}", Color.CYAN)
-    cprint(f"  {'Métrica':<32} {'Valor':<12} {'Código'}", Color.WHITE, bold=True)
-    cprint(SEP, Color.CYAN)
-
-    filas = [
-        ("Attack Vector (AV)",        _AV_NOMBRES.get(av, av),     av),
-        ("Attack Complexity (AC)",     _AC_NOMBRES.get(ac, ac),     ac),
-        ("Privileges Required (PR)",   _PR_NOMBRES.get(pr, pr),     pr),
-        ("User Interaction (UI)",      _UI_NOMBRES.get(ui, ui),     ui),
-        ("Scope (S)",                  _S_NOMBRES.get(s_, s_),      s_),
-        ("Confidentiality (C)",        _CIA_NOMBRES.get(c_, c_),    c_),
-        ("Integrity (I)",              _CIA_NOMBRES.get(i_, i_),    i_),
-        ("Availability (A)",           _CIA_NOMBRES.get(a_, a_),    a_),
-    ]
-    for nombre, valor, codigo in filas:
-        cprint(f"  {nombre:<32} {valor:<12} {codigo}", Color.WHITE)
-
-    cprint(SEP, Color.CYAN)
-
-    # Línea de referencia de severidad
-    cprint("\n  Escala CVSS 3.1:", Color.GREY)
-    escala = [
-        ("None",     "0.0",      Color.GREY),
-        ("Low",      "0.1-3.9",  Color.BLUE),
-        ("Medium",   "4.0-6.9",  Color.YELLOW),
-        ("High",     "7.0-8.9",  Color.ORANGE),
-        ("Critical", "9.0-10.0", Color.RED),
-    ]
-    linea_escala = "  "
-    for etiq, rango, col in escala:
-        linea_escala += f"{col}{Color.BOLD if etiq == sev else ''}{etiq} ({rango}){Color.RESET}  "
-    print(linea_escala)
-    cprint(f"\n{SEP2}\n", Color.CYAN)
-
-    return 0
-
-
-def main() -> int:
-    """Función principal del CLI."""
-    # Intercepción del subcomando 'cvss' antes del parseo normal
-    if len(sys.argv) > 1 and sys.argv[1] == "cvss":
-        print_banner()
-        return cmd_cvss(sys.argv[2:])
-
-    print_banner()
-
-    parser = build_parser()
-    args = parser.parse_args()
-
-    # Procesar logo: --logo-file tiene prioridad sobre --logo-url
-    logo_b64 = ""
-    logo_url  = getattr(args, "logo_url",  "")
-    logo_file = getattr(args, "logo_file", "")
-    if logo_file:
-        import base64
-        import mimetypes
-        logo_path = Path(logo_file)
-        if not logo_path.exists():
-            cprint(f"  [!] Fichero de logo no encontrado: {logo_file}", Color.YELLOW)
-        else:
-            mime, _ = mimetypes.guess_type(str(logo_path))
-            if not mime:
-                mime = "image/png"
-            raw = logo_path.read_bytes()
-            b64 = base64.b64encode(raw).decode("ascii")
-            logo_b64 = f"data:{mime};base64,{b64}"
-            cprint(f"  [i] Logo embebido como base64 ({len(raw)} bytes)", Color.GREY)
-
-    # Construir metadatos
-    meta = ReportMeta(
-        client=args.client,
-        engagement=args.engagement,
-        auditor=args.auditor,
-        scope=args.scope,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        logo_url=logo_url,
-        logo_b64=logo_b64,
-    )
-
-    # Crear instancia de PenReport con sector y clave GPG si se han proporcionado
-    sector  = getattr(args, "sector",  "generic")
-    gpg_key = getattr(args, "gpg_key", "")
-    report = PenReport(meta=meta, verbose=args.verbose,
-                       sector=sector, gpg_key=gpg_key)
-
-    # Cargar ficheros de entrada
-    cprint(f"  Cargando {len(args.INPUT)} fichero(s)...", Color.CYAN)
-    total_loaded = 0
-    for filepath in args.INPUT:
-        cprint(f"  → {filepath}", Color.GREY)
-        n = report.load_vsl_json(filepath)
-        total_loaded += n
-
-    if total_loaded == 0:
-        cprint("  [!] No se han cargado hallazgos. Verifica los ficheros de entrada.", Color.RED)
-        return 1
-
-    # Deduplicación
-    removed = report.deduplicate()
-    if removed > 0:
-        cprint(f"  [i] {removed} hallazgo(s) duplicado(s) eliminado(s).", Color.YELLOW)
-
-    # Resumen en consola
-    report.print_summary()
-
-    # Generar salidas
-    cprint("  Generando informes...", Color.CYAN)
-
-    if args.report_html:
-        report.to_html(args.report_html, executive_only=args.executive_only)
-
-    if args.report_pdf:
-        report.to_pdf(args.report_pdf, executive_only=args.executive_only)
-
-    if args.report_md:
-        report.to_markdown(args.report_md, executive_only=args.executive_only)
-
-    if args.report_json:
-        report.to_json(args.report_json)
-
-    # Exportación PDF personalizable con plantilla (--pdf / --pdf-template, v2.5)
-    pdf_output   = getattr(args, "pdf", None)
-    pdf_template = getattr(args, "pdf_template", None)
-    if pdf_output:
-        cprint("\n  Generando PDF con plantilla personalizable...", Color.CYAN)
-        report_data_pdf = {
-            "client": report.meta.client,
-            "date":   datetime.datetime.now().strftime("%Y-%m-%d"),
-            "findings": [
-                {
-                    "severity":    f.severity,
-                    "id":          f.id,
-                    "title":       f.title,
-                    "description": f.description,
-                }
-                for f in report.findings
-            ],
-        }
-        try:
-            export_to_pdf(report_data_pdf, pdf_template, pdf_output)
-            cprint(f"  PDF generado: {pdf_output}", Color.GREEN)
-        except RuntimeError as exc:
-            cprint(f"  [!] PDF no generado: {exc}", Color.RED)
-
-    # Exportación a Jira (solo si se especificó --export-jira)
-    export_jira_url = getattr(args, "export_jira", "")
-    if export_jira_url:
-        jira_user  = getattr(args, "jira_user", "")
-        jira_token = getattr(args, "jira_token", "")
-        jira_proj  = getattr(args, "jira_project", "SEC")
-        if not jira_user or not jira_token:
-            cprint(
-                "  [!] --export-jira requiere --jira-user y --jira-token.",
-                Color.RED,
-            )
-        else:
-            cprint("\n  Exportando hallazgos a Jira...", Color.CYAN)
-            issue_urls = report.export_to_jira(
-                base_url=export_jira_url,
-                project_key=jira_proj,
-                jira_user=jira_user,
-                jira_token=jira_token,
-                verbose=args.verbose,
-            )
-            if issue_urls:
-                cprint("  Issues Jira creados:", Color.GREEN)
-                for url in issue_urls:
-                    cprint(f"    · {url}", Color.CYAN)
-
-    # Exportación a DefectDojo (solo si se especificó --export-dojo)
-    export_dojo_url = getattr(args, "export_dojo", "")
-    if export_dojo_url:
-        dojo_token      = getattr(args, "dojo_token", "")
-        dojo_engagement = getattr(args, "dojo_engagement", 0)
-        if not dojo_token or not dojo_engagement:
-            cprint(
-                "  [!] --export-dojo requiere --dojo-token y --dojo-engagement.",
-                Color.RED,
-            )
-        else:
-            cprint("\n  Exportando hallazgos a DefectDojo...", Color.CYAN)
-            report.export_to_defectdojo(
-                base_url=export_dojo_url,
-                api_token=dojo_token,
-                engagement_id=dojo_engagement,
-                verbose=args.verbose,
-            )
-
-    print()
-    cprint("  Proceso completado.", Color.GREEN, bold=True)
-    cprint(f"  {COPYRIGHT}", Color.GREY)
-    print()
-
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
