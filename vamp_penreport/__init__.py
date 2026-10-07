@@ -37,22 +37,22 @@ from ._core import (
     extract_findings_from_json,
     normalize_finding,
     PenReport,
-    _PenReportPDF,
+    _PenReportPDF,  # noqa: F401
     calc_cvss31_base_score,
-    _parse_vector_cvss31,
-    _severidad_cvss,
-    _color_severidad,
-    _roundup,
-    _CVSS31_AV,
-    _CVSS31_AC,
-    _CVSS31_PR,
-    _CVSS31_UI,
-    _CVSS31_CIA,
+    _parse_vector_cvss31,  # noqa: F401
+    _severidad_cvss,  # noqa: F401
+    _color_severidad,  # noqa: F401
+    _roundup,  # noqa: F401
+    _CVSS31_AV,  # noqa: F401
+    _CVSS31_AC,  # noqa: F401
+    _CVSS31_PR,  # noqa: F401
+    _CVSS31_UI,  # noqa: F401
+    _CVSS31_CIA,  # noqa: F401
 )
 
 # --- Exportación PDF con plantillas ---
 from ._report import (
-    _get_default_pdf_template,
+    _get_default_pdf_template,  # noqa: F401
     export_to_pdf,
 )
 

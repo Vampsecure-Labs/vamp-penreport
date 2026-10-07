@@ -6,11 +6,10 @@ Exportación PDF via weasyprint con plantillas HTML personalizables.
 """
 from __future__ import annotations
 
-import json
 from html import escape as html_escape
 from typing import Dict, List, Optional
 
-from ._models import VERSION, TOOL_NAME
+from ._models import VERSION
 
 
 def _get_default_pdf_template() -> str:

@@ -20,7 +20,6 @@ from ._models import (
 )
 from ._core import (
     cprint,
-    cprint_sev,
     PenReport,
     ReportMeta,
     calc_cvss31_base_score,
