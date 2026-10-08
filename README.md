@@ -232,6 +232,92 @@ MIT — See `LICENSE` file.
 
 ---
 
+## Sample Output
+
+```bash
+$ python3 vamp_penreport.py \
+    recon.json ssl.json http.json logs_forensic.json \
+    --client "Acme Corp" \
+    --engagement "External Pentest Q3 2026" \
+    --auditor "VampSecure Labs Red Team" \
+    --scope "Perimeter web applications and public APIs" \
+    --start-date 2026-07-01 --end-date 2026-07-31 \
+    --logo-file /path/to/acme_logo.png \
+    --report-html pentest_report.html \
+    --report-pdf  pentest_report.pdf \
+    --report-json consolidated.json
+```
+
+```
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  vamp-penreport v2.6 · VampSecure Labs Security Research Division            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Cargando ficheros de entrada…
+  ✓ recon.json          (vamp-passive-recon v1.2.0  ·  4 findings)
+  ✓ ssl.json            (vamp-ssl-audit v2.3.1       ·  2 findings)
+  ✓ http.json           (vamp-http-audit v1.8.0      ·  5 findings)
+  ✓ logs_forensic.json  (vamp-log-analyzer v3.1      ·  4 findings — MITRE ATT&CK)
+
+Normalización: 15 findings brutos → 14 únicos (1 deduplicado SSL/HTTP)
+Risk score:    raw=185 → 91/100  [Critical]
+
+Secciones del informe:
+  [1] Portada                    → Acme Corp · External Pentest Q3 2026
+  [2] Tabla de contenidos        → 8 secciones con numeración dinámica
+  [3] Resumen ejecutivo          → gauge SVG + top 5 hallazgos + gráfico por herramienta
+  [4] Roadmap de remediación     → Inmediata (2) · Urgente (5) · Planificada (5) · Continua (2)
+  [5] Cobertura MITRE ATT&CK     → 4 tácticas · 4 detectores FORA-NNN (auto-generada)
+  [6] Hallazgos técnicos         → 14 hallazgos con evidencia, CVSS estimado y referencias
+  [7] Metodología                → herramientas usadas, tabla de clasificación de severidad
+  [8] Aviso legal y confidencialidad
+
+Logo embebido: acme_logo.png → base64 data URI (128 KB)
+
+Generando salidas…
+  ✓ pentest_report.html    (fichero autocontenido, sin peticiones externas)
+  ✓ pentest_report.pdf     (18 páginas, generado con fpdf2)
+  ✓ consolidated.json      (schema VSL 2.2, 14 findings)
+```
+
+---
+
+## Why vamp-penreport vs. Dradis · PlexTrac · Serpico
+
+| Capacidad | vamp-penreport | Dradis | PlexTrac | Serpico |
+|---|---|---|---|---|
+| Ingesta directa de JSON VSL nativa | ✅ | ❌ (parsers manuales) | ✅ (importación) | ❌ |
+| PDF nativo sin browser (fpdf2) | ✅ | ✅ | ✅ | ✅ |
+| Sección MITRE ATT&CK auto-generada | ✅ | ❌ | ✅ | ❌ |
+| Checklist ENS RD 311/2022 automático | ✅ (`--sector admin-publica`) | ❌ | ❌ | ❌ |
+| Self-hosted, CLI sin backend web | ✅ | ✅ | ❌ (SaaS) | ✅ |
+| Logo embebido base64 (HTML autocontenido) | ✅ | ❌ | ❌ | ❌ |
+| Open source (MIT) | ✅ | ✅ | ❌ (comercial) | ✅ |
+| Scoring logarítmico integrado | ✅ | ❌ | ❌ | ❌ |
+
+- Cero dependencias de backend: un único comando CLI genera HTML, PDF y Markdown listos para entregar al cliente.
+- La sección MITRE ATT&CK se genera automáticamente a partir de los findings FORA-NNN de `vamp-log-analyzer` — sin configuración adicional ni mapeo manual.
+- El checklist ENS RD 311/2022 (`--sector admin-publica`) marca automáticamente los controles afectados por los findings del engagement, reduciendo el tiempo de redacción para clientes de la Administración Pública española.
+- El HTML es completamente autocontenido (logo, gráficos SVG embebidos) — sin peticiones externas al abrir el informe en el cliente.
+
+---
+
+## Report Sections Coverage
+
+| Sección del informe | Contenido generado | Condición |
+|---|---|---|
+| Portada | Cliente, fechas, auditor, scope, logo, clasificación CONFIDENTIAL | Siempre |
+| Tabla de contenidos | Índice con numeración dinámica, navegable por anclas HTML | Siempre |
+| Resumen ejecutivo | Gauge SVG de riesgo, tabla de severidades, top 5 findings, gráfico por herramienta | Siempre |
+| Roadmap de remediación | 4 fases: Inmediata (0–7d), Urgente (7–30d), Planificada (30–90d), Continua | Siempre |
+| Cobertura MITRE ATT&CK | Matriz de tácticas/técnicas con badges de severidad y tooltips de técnica | Solo si hay findings FORA-NNN |
+| Hallazgos técnicos | Descripción, evidencia, CVSS estimado, referencias, remediación por finding | Omitido con `--executive-only` |
+| Checklist ENS RD 311/2022 | Estado por control (op.acc, op.exp, op.mon, mp.com, mp.sw, mp.info…) | `--sector admin-publica` |
+| Metodología | Herramientas usadas con versión, tabla de clasificación de severidad VSL | Siempre |
+| Aviso legal | Confidencialidad, alcance de la autorización, descargo de responsabilidad | Siempre |
+
+---
+
 ## Historial de versiones
 
 | Versión | Cambios principales |
