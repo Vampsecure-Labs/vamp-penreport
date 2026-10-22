@@ -3,7 +3,7 @@
   <img src="https://github.com/Vampsecure-Labs/vamp-penreport/actions/workflows/ci.yml/badge.svg" alt="CI"/>
 # vamp-penreport
 
-![Version](https://img.shields.io/badge/version-2.7-crimson)
+![Version](https://img.shields.io/badge/version-2.7.0-crimson)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![VampSecure Labs](https://img.shields.io/badge/VampSecure-Labs-7c3aed)
@@ -243,13 +243,13 @@ $ python3 vamp_penreport.py \
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│  vamp-penreport v2.7 · VampSecure Labs Security Research Division            │
+│  vamp-penreport v2.7.0 · VampSecure Labs Security Research Division          │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 Loading input files…
-  ✓ recon.json          (vamp-passive-recon v1.2.1  ·  4 findings)
+  ✓ recon.json          (vamp-passive-recon v1.3.0  ·  4 findings)
   ✓ ssl.json            (vamp-ssl-audit v2.3.1       ·  2 findings)
-  ✓ http.json           (vamp-http-audit v1.8.0      ·  5 findings)
+  ✓ http.json           (vamp-http-audit v1.5.1      ·  5 findings)
   ✓ logs_forensic.json  (vamp-log-analyzer v3.1      ·  4 findings — MITRE ATT&CK)
 
 Normalization: 15 raw findings → 14 unique (1 deduplicated SSL/HTTP)
@@ -315,7 +315,7 @@ Generating outputs…
 
 | Version | Main changes |
 |---------|-------------|
-| v2.7 | Bilingual README (EN/ES) |
+| v2.7.0 | Bilingual README (EN/ES) |
 | v2.6 | ENS RD 311/2022 checklist in `--sector admin-publica`: automatic control status (op.acc.1–6, op.exp.2/7, op.mon.1, mp.com.1/3, mp.sw.1, mp.info.3) |
 | v2.5 | Additional sectors (generic, healthcare); configurable executive report |
 | v2.4 | VampSecure Labs Security Research Division — initial public release |
@@ -553,7 +553,7 @@ Los 25 detectores cubren 12 tácticas: Reconnaissance, Initial Access, Execution
 
 | Versión | Cambios principales |
 |---------|---------------------|
-| v2.7 | README bilingüe (EN/ES) |
+| v2.7.0 | README bilingüe (EN/ES) |
 | v2.6 | Checklist ENS RD 311/2022 en `--sector admin-publica`: estado automático por control (op.acc.1–6, op.exp.2/7, op.mon.1, mp.com.1/3, mp.sw.1, mp.info.3) |
 | v2.5 | Sectores adicionales (genérico, sanidad); informe ejecutivo configurable |
 | v2.4 | VampSecure Labs Security Research Division — versión inicial pública |
