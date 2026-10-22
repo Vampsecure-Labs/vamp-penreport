@@ -94,6 +94,32 @@ def extract_findings_from_json(
         findings_raw = []
         verbose_log(f"No se encontraron hallazgos en {filepath}", verbose)
 
+    # Formato vamp-http-audit: results[] contiene objetos URL con findings[] anidados.
+    # Aplanamos los hallazgos individuales enriqueciendo cada uno con la URL como target.
+    if (findings_raw and
+            isinstance(findings_raw[0], dict) and
+            "findings" in findings_raw[0] and
+            "url" in findings_raw[0]):
+        flattened: list[Dict] = []
+        for url_result in findings_raw:
+            url_target = url_result.get("url", target)
+            php_ver    = url_result.get("php_version") or ""
+            for finding in url_result.get("findings", []):
+                enriched = dict(finding)
+                enriched.setdefault("target", url_target)
+                # Propagar versión PHP al detalle si procede
+                if php_ver and "php" in enriched.get("name", "").lower():
+                    enriched["detail"] = (
+                        f"[PHP {php_ver}] " + enriched.get("detail", "")
+                    ).strip()
+                flattened.append(enriched)
+        verbose_log(
+            f"Formato vamp-http-audit detectado: {len(findings_raw)} URL(s), "
+            f"{len(flattened)} hallazgo(s) aplanados",
+            verbose,
+        )
+        findings_raw = flattened
+
     return findings_raw, tool, version, target
 
 
