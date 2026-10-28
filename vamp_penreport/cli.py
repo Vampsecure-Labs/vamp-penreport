@@ -1,7 +1,7 @@
 # © VampSecure Studios — VampSecure Labs Security Research Division
 # -*- coding: utf-8 -*-
 """
-cli — Interfaz de línea de comandos de vamp-penreport v2.7.0.
+cli — Interfaz de línea de comandos de vamp-penreport v2.7.0
 Punto de entrada principal: main().
 """
 from __future__ import annotations
